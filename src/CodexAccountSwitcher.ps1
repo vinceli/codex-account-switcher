@@ -449,7 +449,7 @@ function Format-QuotaWindow($Window, [DateTimeOffset]$ReceivedAt, [switch]$IsPri
         }
         $detail = "$duration / 剩餘 $remaining / 重置 $($reset.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))"
     }
-    [pscustomobject]@{ Text="$duration $remaining ($countdown)"; Detail=$detail; Remaining=$remainingValue }
+    [pscustomobject]@{ Text="$remaining ($countdown)"; Detail=$detail; Remaining=$remainingValue }
 }
 
 function Get-QuotaColor($Remaining) {
@@ -483,7 +483,7 @@ function ConvertFrom-QuotaReply($Reply) {
         $secondary = Format-QuotaWindow $data.rate_limit.secondary_window $Reply.ReceivedAt
         if ($null -ne $secondary.Remaining -and $secondary.Remaining -le 0) {
             $primary.Remaining = 0
-            $primary.Text = if ($primary.Text -match '^\S+\s+') { $primary.Text -replace '^(\S+)\s+.*$', '$1 0% (-)' } else { '0% (-)' }
+            $primary.Text = '0% (-)'
             $primary.Detail = ($primary.Detail -replace '/ 剩餘 (?:未知|[\d.]+%) /', '/ 剩餘 0% /') + '（週額度已用盡）'
         }
         $result.Primary = $primary.Text; $result.Secondary = $secondary.Text
@@ -788,7 +788,7 @@ try {
         $currentLabel.Text='登入檔帳號：account-a@example.invalid'
         $nameBox.Text='工作帳號'
         $item=New-Object Windows.Forms.ListViewItem('工作帳號')
-        foreach ($value in @('account-a@example.invalid','plus','5h 78% (15:08)','7d 84% (6.8d)','目前','已更新','2026-09-17 12:00')) { [void]$item.SubItems.Add($value) }
+        foreach ($value in @('account-a@example.invalid','plus','78% (15:08)','84% (6.8d)','目前','已更新','2026-09-17 12:00')) { [void]$item.SubItems.Add($value) }
         $item.UseItemStyleForSubItems=$false
         $item.SubItems[3].ForeColor=Get-QuotaColor 78
         $item.SubItems[4].ForeColor=Get-QuotaColor 84

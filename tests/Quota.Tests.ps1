@@ -63,13 +63,13 @@ try {
     $handler=New-Object QuotaTestHandler; $handler.Body=$json
     $reply=Fetch-Test $handler $cancel
     $q=ConvertFrom-QuotaReply $reply
-    Check ($q.Primary -like '5h 78%*' -and $q.Secondary -like '7d 84%*') '雙窗口百分比與實際週期'
+    Check ($q.Primary -like '78%*' -and $q.Secondary -like '84%*' -and $q.Detail.Contains('5h') -and $q.Detail.Contains('7d')) '雙窗口百分比與實際週期'
     Check ($q.PrimaryRemaining -eq 78 -and $q.SecondaryRemaining -eq 84) '保留剩餘比例供介面著色'
     Check ((Get-QuotaColor 0).Name -eq 'Firebrick' -and (Get-QuotaColor 29.9).Name -eq 'DarkOrange' -and (Get-QuotaColor 69.9).Name -eq 'ForestGreen' -and (Get-QuotaColor 70).Name -eq 'RoyalBlue') '四色門檻'
     $weeklyEmpty = $json | ConvertFrom-Json
     $weeklyEmpty.rate_limit.secondary_window.used_percent = 100
     $qEmpty = ConvertFrom-QuotaReply ([pscustomobject]@{ Status='OK'; Json=($weeklyEmpty | ConvertTo-Json -Depth 8); ReceivedAt=$now })
-    Check ($qEmpty.PrimaryRemaining -eq 0 -and $qEmpty.Primary -eq '5h 0% (-)' -and $qEmpty.SecondaryRemaining -eq 0) '週額度歸零時五小時額度同步歸零且倒數顯示-'
+    Check ($qEmpty.PrimaryRemaining -eq 0 -and $qEmpty.Primary -eq '0% (-)' -and $qEmpty.SecondaryRemaining -eq 0) '週額度歸零時五小時額度同步歸零且倒數顯示-'
     Check ($q.Detail.Contains('15m') -and $q.Status -eq '已更新／多額度') '其他額度保留在提示'
         Check ($q.Detail.Contains([DateTimeOffset]::FromUnixTimeSeconds($reset).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))) '絕對重置時間優先'
     # 5 小時額度顯示重置時間點，不顯示剩餘時間 (例如 3h00m)
@@ -109,7 +109,7 @@ try {
     Check ($task.GetAwaiter().GetResult().Status -eq 'Canceled') '取消進行中的 HTTP'
     $otherCancel.Dispose()
     $q=ConvertFrom-QuotaReply ([pscustomobject]@{ Status='OK'; Json='{"plan_type":"plus","rate_limit":{"primary_window":{"limit_window_seconds":900}}}'; ReceivedAt=$now })
-    Check ($q.Primary -like '15m 未知*' -and $q.Secondary -eq '未提供') '缺值不誤判為零或滿額'
+    Check ($q.Primary -like '未知*' -and $q.Detail.Contains('15m') -and $q.Secondary -eq '未提供') '缺值不誤判為零或滿額'
     foreach ($case in @(@(125,'0%'),@(-5,'100%'))) {
         Check ((Format-QuotaWindow ([pscustomobject]@{ used_percent=$case[0] }) $now).Text.Contains($case[1])) '百分比上下限'
     }
