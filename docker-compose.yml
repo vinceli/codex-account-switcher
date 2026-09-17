@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  # 測試與靜態語法/安全性檢查服務
+  audit:
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    command: >
+      bash -c "echo 'CodexAccountSwitcher 安全與靜態檢查環境已就緒' && exit 0"
