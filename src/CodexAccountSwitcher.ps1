@@ -483,7 +483,7 @@ function ConvertFrom-QuotaReply($Reply) {
         $secondary = Format-QuotaWindow $data.rate_limit.secondary_window $Reply.ReceivedAt
         if ($null -ne $secondary.Remaining -and $secondary.Remaining -le 0) {
             $primary.Remaining = 0
-            $primary.Text = if ($primary.Text -match '\s') { $primary.Text -replace '^(\S+)\s+\S+', '$1 0%' } else { '0%' }
+            $primary.Text = if ($primary.Text -match '^\S+\s+') { $primary.Text -replace '^(\S+)\s+.*$', '$1 0% (-)' } else { '0% (-)' }
             $primary.Detail = ($primary.Detail -replace '/ 剩餘 (?:未知|[\d.]+%) /', '/ 剩餘 0% /') + '（週額度已用盡）'
         }
         $result.Primary = $primary.Text; $result.Secondary = $secondary.Text

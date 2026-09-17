@@ -68,8 +68,8 @@ try {
     Check ((Get-QuotaColor 0).Name -eq 'Firebrick' -and (Get-QuotaColor 29.9).Name -eq 'DarkOrange' -and (Get-QuotaColor 69.9).Name -eq 'ForestGreen' -and (Get-QuotaColor 70).Name -eq 'RoyalBlue') '四色門檻'
     $weeklyEmpty = $json | ConvertFrom-Json
     $weeklyEmpty.rate_limit.secondary_window.used_percent = 100
-    $q = ConvertFrom-QuotaReply ([pscustomobject]@{ Status='OK'; Json=($weeklyEmpty | ConvertTo-Json -Depth 8); ReceivedAt=$now })
-    Check ($q.PrimaryRemaining -eq 0 -and $q.Primary -like '5h 0%*' -and $q.SecondaryRemaining -eq 0) '週額度歸零時五小時額度同步歸零'
+    $qEmpty = ConvertFrom-QuotaReply ([pscustomobject]@{ Status='OK'; Json=($weeklyEmpty | ConvertTo-Json -Depth 8); ReceivedAt=$now })
+    Check ($qEmpty.PrimaryRemaining -eq 0 -and $qEmpty.Primary -eq '5h 0% (-)' -and $qEmpty.SecondaryRemaining -eq 0) '週額度歸零時五小時額度同步歸零且倒數顯示-'
     Check ($q.Detail.Contains('15m') -and $q.Status -eq '已更新／多額度') '其他額度保留在提示'
         Check ($q.Detail.Contains([DateTimeOffset]::FromUnixTimeSeconds($reset).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))) '絕對重置時間優先'
     # 5 小時額度顯示重置時間點，不顯示剩餘時間 (例如 3h00m)
