@@ -543,7 +543,7 @@ function Update-QuotaResults {
         }
     }
     if ($script:QuotaQueryStarted -and !$script:QuotaJobs.Count) {
-        if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss') + "`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
+        if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss') }
         $script:QuotaQueryStarted = $false
     }
 }
@@ -694,7 +694,7 @@ function Invoke-Action([scriptblock]$Action) {
 }
 function Refresh-Accounts {
     Stop-QuotaQueries
-    if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = "最後查詢：查詢中…`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
+    if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：查詢中…' }
     $list.Items.Clear()
     $currentKey = ''
     try {
@@ -721,7 +721,7 @@ function Refresh-Accounts {
         } catch { $bad++ }
     }
     Write-SwitcherLog 'DEBUG' '刷新清單完成' "CurrentKey=$currentKey, Backups=$($list.Items.Count), Corrupted=$bad"
-    if (!$script:QuotaJobs.Count -and $null -ne $lastQueryLabel) { $lastQueryLabel.Text = "最後查詢：無可查詢帳號`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
+    if (!$script:QuotaJobs.Count -and $null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：無可查詢帳號' }
     if ($bad) { Set-Status "有 $bad 個備份無法解密，未列入清單；原檔已保留。" }
 }
 
@@ -770,8 +770,8 @@ $restore=New-Button '還原上次切換' 366 380 150 {
     }
 }
 $refresh=New-Button '重新整理帳號與額度' 906 380 186 { Invoke-Action { Refresh-Accounts } }
-$lastQueryLabel=New-Label "最後查詢：尚未查詢`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" 842 418 250 48
-$lastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 7.5)
+$lastQueryLabel=New-Label '最後查詢：尚未查詢' 842 422 250 24
+$lastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
 $lastQueryLabel.TextAlign='MiddleCenter'
 $lastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
 $status=New-Label '只換 auth，不執行登出；保留現有工作區。已被登出撤銷的備份需重新登入並儲存。' 26 430 800 40
