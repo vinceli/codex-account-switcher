@@ -36,14 +36,12 @@
 
 ---
 
-## 三、推送到 GitHub 步驟
+## 三、遠端 GitHub 儲存庫建立與推送結果
 
-本機 Git 儲存庫與 `main` 分支已完全就緒。請提供您的 GitHub 儲存庫 URL，或直接執行以下指令完成推送：
+已直接透過 GitHub API 為您建立私有儲存庫並完成推送：
 
-```powershell
-# 1. 關聯您的遠端 GitHub 儲存庫
-git remote add origin https://github.com/<您的使用者名稱或組織>/<儲存庫名稱>.git
+* **儲存庫位址**：[https://github.com/vinceli/codex-account-switcher](https://github.com/vinceli/codex-account-switcher)
+* **可見度**：私有 (Private)
+* **追蹤分支**：`origin/main` (與本地 `main` 保持同步)
+* **最新 Commit**：`79562dc` (`docs: 新增 Git 版控與去機敏化審計報告`)
 
-# 2. 推送至 main 分支
-git push -u origin main
-```
