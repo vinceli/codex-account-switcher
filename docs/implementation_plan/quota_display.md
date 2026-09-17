@@ -1,85 +1,39 @@
-# Codex 帳號切換工具 - 帳號額度（5h / 每週）查詢與顯示計畫 (Implementation Plan)
+# 帳號額度查詢與顯示計畫
 
-為滿足使用者在開啟應用時一併掌握各帳號剩餘額度（5 小時滾動上限與每週配額）的需求，本計畫規劃串接 OpenAI Codex 底層之配額查詢端點，並於切換器主畫面以直觀的剩餘百分比與重置倒數進行呈現。
+## 定案
 
----
+採非同步、唯讀查詢。開啟工具或按「重新整理帳號與額度」時，使用各帳號現有 Access Token 向 `https://chatgpt.com/backend-api/wham/usage` 發送 GET，帶入 `ChatGPT-Account-Id`；目前帳號優先採用最新 `auth.json`，其他帳號使用加密備份。
 
-## [需要架構決策]
+查詢不登出、不換發 Token、不修改 `auth.json` 或備份，也不操作工作區、對話或專案。401 可能表示過期或撤銷，只提示重新授權，不重試。失效備份保留。
 
-串接 OpenAI 未公開之內部使用量 API (`https://chatgpt.com/backend-api/wham/usage`) 涉及外部網路連線與 Token 生命週期管理，提供以下兩種方案評估：
+## 實作
 
-| 評估維度 | 方案 A：非同步背景查詢 + 自動 Token 換發（推薦） | 方案 B：啟動時輕量同步查詢 |
-| :--- | :--- | :--- |
-| **介面流暢度** | **極佳**：視窗立即秒開，額度欄位先顯示「查詢中…」，查詢完畢即時非同步填入。 | **一般**：若有 2~3 個帳號且網路延遲，開啟時可能停頓 0.5~1.5 秒。 |
-| **Token 逾期容錯** | **具自我修復能力**：遇 401 逾期時，自動透過 `refresh_token` 換發新 `access_token` 並更新加密備份。 | **僅顯示逾期**：遇 401 標記「憑證逾期」，需待使用者切換或重新授權。 |
-| **離線與超時防護** | **強**：背景逾時 3 秒自動結束，完全不影響離線時的切換作業。 | **普通**：若完全無網路，需等待各帳號逾時才會顯示視窗。 |
-| **架構複雜度** | 需加入 PowerShell Background Runspace 或非同步定時調度。 | 程式碼異動範圍極小，循序呼叫。 |
+- 主程式：`src/CodexAccountSwitcher.ps1`。使用 .NET HttpClient 的非同步 Task，WinForms Timer 僅收取已完成結果；每次請求最多 3 秒，不跟隨重新導向，不保存 Cookie，不記錄憑證或回應原文。
+- 清單增加方案、「5 小時用量」、「週用量」及查詢狀態；內容仍依 API 回傳的實際週期與剩餘比例顯示。
+- 重新整理按鈕下方顯示整輪查詢完成時間；剩餘 0% 紅色、低於 30% 黃色、低於 70% 綠色、70% 以上藍色，未知值維持灰色。
+- 週剩餘額度為 0% 時，5 小時剩餘額度同步顯示為 0%，兩欄皆套用紅色。
+- 剩餘百分比為 `100 - used_percent`，限制在 0–100。缺值顯示未知，缺窗口顯示未提供。
+- 優先採 `reset_at` 絕對時間；5 小時用量與小於 12 小時週用量改為顯示具體重置時間點（同日 `HH:mm`，跨日 `MM/dd HH:mm`），週用量大於等於 12 小時保持倒數格式（`>=24h` 顯示 `X.Xd`，`12h~24h` 顯示 `XhXXm`）。提示顯示本地詳細重置時間、查詢時間及 `additional_rate_limits` 中其他額度。
+- 每輪查詢附 generation 與帳號 Key。重新整理、儲存、切換、引導登入、還原及關閉視窗均取消舊請求，結果只能更新相同 Key 的當輪資料。
+- 連線失敗、逾時、401、403、429 與不支援格式分別顯示狀態；不阻擋本機帳號切換。
+- `scripts/build-installer.ps1` 產出 `dist/` 安裝程式、免安裝 ZIP 與 SHA256 校驗檔；同步 README 與架構規格。
 
-> [!IMPORTANT]
-> **架構建議**：採 **方案 A**。因多帳號切換器的核心職責是「迅速、可靠地切換程序」，額度查詢屬輔助感知資訊，絕不可因外部 API 延遲阻礙主視窗開啟或導致介面凍結；同時具備自動 Token 展期才能確保長期放置的備份帳號能持續成功讀取額度。
+## 介面契約與限制
 
----
+`wham/usage` 是內部端點，其格式與可用性不保證穩定。此處採用的 snake_case 欄位與官方 App Server RPC 的 camelCase 格式不同，不能互換。
 
-## User Review Required
+[官方 App Server 規格](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt) 記載窗口可缺省、週期不固定及多額度結構。官方 RPC 適用於該 server 的登入帳號；本工具不為查詢不同備份而啟動 server、切換登入或刷新憑證。
 
-> [!NOTE]
-> **API 端點規格已實測驗證通過**：
-> 經本地實測發送 Bearer Token 至 `https://chatgpt.com/backend-api/wham/usage`：
-> * **5 小時窗口 (`primary_window`)**：包含 `used_percent`（使用百分比）與 `reset_after_seconds`（重置秒數）。
-> * **每週窗口 (`secondary_window`)**：包含 `used_percent` 與 `reset_after_seconds`。
-> * **方案別 (`plan_type`)**：可直接識別出 `team`、`plus`、`pro`。
+## 驗證
 
----
+1. `tests/Run-SelfTest.ps1`：既有切換／還原／工作區保護，以及 `tests/Quota.Tests.ps1` 的合成 HTTP 測試（正常、缺值、多額度、401/403/429/500、離線、逾時、取消、UI 回應、過期結果與 Key 對應）。
+2. `-PreviewPath`：假帳號介面預覽，不讀取真實憑證。
+3. 發行包：檢查白名單、機敏特徵、內嵌 ZIP 與原始碼一致性及校驗碼。
+4. 實際帳號唯讀查詢另行記錄結果；測試成功不代表舊備份永遠有效，也不代表完成實際登入／切換驗證。
 
-## Proposed Changes
+## 本次驗證結果（2026-09-17）
 
-### 1. 核心查詢與 Token 自動展期模組 (Query & Refresh Logic)
-
-#### [MODIFY] `outputs/CodexAccountSwitcher/CodexAccountSwitcher.ps1`
-* **新增 `Get-AccountQuota` 函式**：
-  * 傳入已解密之 `auth.json` 資料。
-  * 呼叫 `GET https://chatgpt.com/backend-api/wham/usage`。
-  * 若回傳 401，自動使用 `refresh_token` 呼叫 `POST https://auth.openai.com/oauth/token`（Client ID: `app_EMoamEEZ73f0CkXaXp7hrann`）換發新 Token，自動回寫更新 `.bin` 加密備份，並重試查詢。
-  * 回傳物件：`@{ Plan; PrimaryUsed; PrimaryRemaining; PrimaryResetSec; SecondaryUsed; SecondaryRemaining; SecondaryResetSec; Status }`。
-* **調整清單控制項 (ListView Layout)**：
-  * 視窗寬度適度微調（由 740 擴展至 860，提供充裕顯示空間）。
-  * 清單欄位調整為：
-    1. 名稱 (110 px)
-    2. 帳號 (180 px)
-    3. 方案 (60 px，例如 team/plus)
-    4. 5h 剩餘 (140 px，例如 `78% (3h8m)`)
-    5. 每週剩餘 (140 px，例如 `84% (6.8d)`)
-    6. 狀態 (65 px，目前/空白)
-    7. 備份時間 (140 px)
-* **開啟與重新整理觸發 (Trigger on Launch)**：
-  * 開啟視窗時在背景（或首輪）啟動查詢一次。
-  * 點擊「重新整理」按鈕時亦同步重整最新額度。
-
----
-
-### 2. 封裝與安裝發行檔同步
-
-#### [MODIFY] `work/build-installer.ps1`
-* 執行自動化建置，同步更新：
-  * `dist/Setup-CodexAccountSwitcher.exe`
-  * `dist/CodexAccountSwitcher-v1.0.0-Portable.zip`
-  * `dist/SHA256SUMS.txt`
-
-#### [MODIFY] `outputs/CodexAccountSwitcher/使用說明.md`
-* 增加「額度查詢與重置倒數說明」章節。
-
----
-
-## Verification Plan
-
-### 1. 額度查詢與解析測試
-* 針對現有的已儲存帳號（例如：`account-a@example.com` 與 `account-b@example.com`）執行配額查詢：
-  * 驗證 5h 剩餘與重置時間格式化（例如：`0% (2h 19m)`、`78% (3h 8m)`）。
-  * 驗證每週剩餘與重置時間格式化（例如：`84% (6.8d)`、`0% (2.1d)`）。
-
-### 2. 介面視覺與流暢度驗證
-* 啟動 GUI 介面，確認清單欄位對齊正確、文字無截斷、視窗開啟不卡死。
-* 執行 `-SelfTest` 確認所有回歸測試與安全邊界無虞。
-
-### 3. 安裝包重構與純淨度審計
-* 重新建置發行包，確認新版 `Setup.exe` 與 `Portable.zip` 正常產出且 0 憑證洩漏。
+- Windows PowerShell 5.1 下，既有核心 SelfTest 與新增額度測試皆通過；HTTP 回應採模擬資料。
+- 假帳號 WinForms 預覽已檢查，新增欄位、正常額度及重新授權狀態可見。
+- 安裝程式與免安裝 ZIP 已建置；憑證特徵檢查通過。未安裝、未切換真實帳號或重啟 Desktop。
+- 真實連線驗證未完成：此測試程序解密既有備份時出現 CryptographicException；使用目前登入檔查詢時出現 TLS AuthenticationException。未降低 TLS 驗證、未修改認證。比對測試前後登入檔與全部現存備份的 SHA256，內容一致。仍需在正常使用者桌面環境確認實際額度。

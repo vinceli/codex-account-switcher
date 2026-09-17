@@ -23,7 +23,7 @@
 
 ### 切換器腳本與介面
 
-#### [MODIFY] [CodexAccountSwitcher.ps1](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/outputs/CodexAccountSwitcher/CodexAccountSwitcher.ps1)
+#### [MODIFY] [CodexAccountSwitcher.ps1](../../src/CodexAccountSwitcher.ps1)
 - **新增 CLI 探測函式 `Get-CodexCliPath`**：
   - 動態尋找 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`（選取最新版本），若無則降級尋找系統 `PATH`。
 - **新增 `Start-GuidedLogin` 引導登入流程**：
@@ -49,7 +49,7 @@
 
 ### 文件與指引
 
-#### [MODIFY] [使用說明.md](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/outputs/CodexAccountSwitcher/%E4%BD%BF%E7%94%A8%E8%AA%AA%E6%98%8E.md)
+#### [MODIFY] [使用說明.md](../../README.md)
 - 新增「新增或重新授權帳號（引導登入）」章節。
 - 說明工具內直接點選「引導登入新帳號」的操作步驟與注意事項。
 - 更新常見問題與失效排除說明。

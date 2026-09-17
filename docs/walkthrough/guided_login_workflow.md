@@ -6,7 +6,7 @@
 
 ## 異動項目清單
 
-### 1. 核心腳本 [`CodexAccountSwitcher.ps1`](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/outputs/CodexAccountSwitcher/CodexAccountSwitcher.ps1)
+### 1. 核心腳本 [`CodexAccountSwitcher.ps1`](../../src/CodexAccountSwitcher.ps1)
 - **`Get-CodexCliPath`**：
   - 動態尋找最新版 `codex.exe`（掃描 `%LOCALAPPDATA%\OpenAI\Codex\bin` 依最後修改時間排序，或退回系統 PATH）。
 - **`Prompt-AccountName`**：
@@ -29,7 +29,7 @@
   - `-PreviewPath` 模式繞過互斥鎖阻擋，支援背景快速產生介面截圖。
   - 全檔案採用 UTF-8 with BOM 格式儲存，確保 Windows PowerShell 5.1 繁體中文環境無亂碼。
 
-### 2. 操作指引 [`使用說明.md`](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/outputs/CodexAccountSwitcher/%E4%BD%BF%E7%94%A8%E8%AA%AA%E6%98%8E.md)
+### 2. 操作指引 [`使用說明.md`](../../README.md)
 - 新增「第一次使用 / 新增帳號」的引導登入 SOP。
 - 更新「舊備份失效（401 Unauthorized / token_revoked）時」的快速重新授權指南。
 
@@ -63,5 +63,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File outputs\CodexAccountSwit
 ```
 
 ### 3. 介面預覽截圖更新
-已重新輸出更新後的 WinForms 介面預覽至 [`switcher-preview.png`](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/work/switcher-preview.png)。
+已重新輸出更新後的 WinForms 介面預覽至 [`switcher-preview.png`](../../work/switcher-preview.png)。
 底部按鈕已包含「引導登入新帳號」，介面排版均衡對稱。

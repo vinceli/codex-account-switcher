@@ -2,7 +2,8 @@
 # Codex 帳號切換工具 - 自動化封裝與安全隔離審計建置腳本
 # ==============================================================================
 param(
-    [string]$Version = "1.0.0"
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = "1.0.0",
+    [ValidatePattern('^Setup-CodexAccountSwitcher(?:-[A-Za-z0-9.]+)?\.exe$')][string]$SetupFileName = 'Setup-CodexAccountSwitcher.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +14,7 @@ if (!$baseDir -or !(Test-Path (Join-Path $baseDir 'src'))) {
 
 $srcDir = Join-Path $baseDir 'src'
 $distDir = Join-Path $baseDir 'dist'
-$stagingDir = Join-Path $baseDir 'work\staging'
+$stagingDir = Join-Path $baseDir ('work\staging-' + [guid]::NewGuid().ToString('N'))
 $installerDir = Join-Path $baseDir 'work\installer'
 $payloadZip = Join-Path $installerDir 'payload.zip'
 $cscExe = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -22,9 +23,17 @@ Write-Host "========================================================" -Foregroun
 Write-Host " [Build] 開始封裝 Codex 帳號切換工具 v$Version" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
-# 1. 準備目錄
-if (Test-Path $stagingDir) { Remove-Item -LiteralPath $stagingDir -Recurse -Force }
-if (Test-Path $distDir) { Remove-Item -LiteralPath $distDir -Recurse -Force }
+# 1. 準備目錄；僅清理本次建立的 staging，不刪除整個 dist。
+$rootPrefix = [IO.Path]::GetFullPath($baseDir).TrimEnd('\') + '\'
+foreach ($directory in @($stagingDir, $distDir, $installerDir)) {
+    $absolute = [IO.Path]::GetFullPath($directory)
+    if (!$absolute.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw '建置目錄超出專案範圍。' }
+    $ancestor = $absolute
+    while ($ancestor -and $ancestor.TrimEnd('\') -ne $rootPrefix.TrimEnd('\')) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw '建置目錄不可使用連結或 junction。' }
+        $ancestor = Split-Path -Parent $ancestor
+    }
+}
 if (!(Test-Path $installerDir)) { New-Item -ItemType Directory -Path $installerDir -Force | Out-Null }
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
@@ -67,7 +76,7 @@ if (Test-Path $readmeSrc) {
 Write-Host "`n[Step 2/5] 執行機敏資料檢查閘門 (Security Gate)..." -ForegroundColor Yellow
 
 # 4.1 檔名/副檔名黑名單檢查
-$forbiddenPatterns = @('*.bin', '*.rollback', '*.log', 'auth.json', '*.jwt', '*.key', '*.env', '*.token')
+$forbiddenPatterns = @('*.bin', '*.rollback', '*.log', 'auth.json', 'auth.*.json', '*.jwt', '*.key', '*.env', '.env*', '*.token')
 foreach ($pattern in $forbiddenPatterns) {
     $leaks = Get-ChildItem -Path $stagingDir -Filter $pattern -Recurse -File
     if ($leaks.Count -gt 0) {
@@ -97,6 +106,7 @@ Write-Host "  [PASS] 內容敏感字串與個人憑證掃描通過 (無任何真
 # 5. 產生免安裝發行包 (Portable.zip)
 Write-Host "`n[Step 3/5] 封裝免安裝發行包 (Portable.zip)..." -ForegroundColor Yellow
 $portableZip = Join-Path $distDir "CodexAccountSwitcher-v$Version-Portable.zip"
+if (Test-Path -LiteralPath $portableZip) { Remove-Item -LiteralPath $portableZip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory($stagingDir, $portableZip)
 Write-Host "  [OK] 已產出: $portableZip ($( [Math]::Round((Get-Item $portableZip).Length / 1KB, 2) ) KB)" -ForegroundColor Green
@@ -107,7 +117,7 @@ if (Test-Path $payloadZip) { Remove-Item -LiteralPath $payloadZip -Force }
 [System.IO.Compression.ZipFile]::CreateFromDirectory($stagingDir, $payloadZip)
 
 $installerCs = Join-Path $srcDir 'Installer.cs'
-$setupExe = Join-Path $distDir 'Setup-CodexAccountSwitcher.exe'
+$setupExe = Join-Path $distDir $SetupFileName
 
 $compileArgs = @(
     "/target:winexe",
@@ -146,7 +156,7 @@ Write-Host "  [OK] 已產出自包含單檔安裝程式: $setupExe ($( [Math]::R
 Write-Host "`n[Step 5/5] 計算發行檔案 SHA-256 雜湊..." -ForegroundColor Yellow
 $hashTxt = Join-Path $distDir 'SHA256SUMS.txt'
 $hashes = @()
-foreach ($distFile in Get-ChildItem -Path $distDir -File) {
+foreach ($distFile in Get-Item -LiteralPath $setupExe, $portableZip) {
     $h = (Get-FileHash -Path $distFile.FullName -Algorithm SHA256).Hash
     $hashes += "$h  $($distFile.Name)"
     Write-Host "  $($distFile.Name) : $h" -ForegroundColor Gray

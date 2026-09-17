@@ -47,7 +47,7 @@
 - 經 RPC 實測連線已通過驗證（HTTP 200 OK，ChatGPT Plus 方案）。
 
 ### 3. 引導登入全面升級：【裝置代碼安全授權模式 (--device-auth)】
-為了解決「瀏覽器自動開窗導致使用者誤在同一 Session 登出」的根本問題，在 [`CodexAccountSwitcher.ps1`](file:///C:/Users/vince/Documents/Codex/2026-09-17/new-chat/outputs/CodexAccountSwitcher/CodexAccountSwitcher.ps1) 加入了全自動化的裝置代碼登入：
+為了解決「瀏覽器自動開窗導致使用者誤在同一 Session 登出」的根本問題，在 [`CodexAccountSwitcher.ps1`](../../src/CodexAccountSwitcher.ps1) 加入了全自動化的裝置代碼登入：
 - **操作方式**：
   1. 點選切換器「**引導登入新帳號**」。
   2. 彈出對話框中點選「**是 (Y)**」選擇【裝置代碼安全模式】。

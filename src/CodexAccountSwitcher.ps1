@@ -346,16 +346,220 @@ function Start-GuidedLogin {
     }
 }
 
+function Initialize-QuotaClient {
+    if ('CodexSwitcher.QuotaClient' -as [type]) { return }
+    Add-Type -AssemblyName System.Net.Http
+    Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition @'
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading;
+using System.Threading.Tasks;
+namespace CodexSwitcher {
+    public sealed class QuotaReply {
+        public string Status;
+        public string Json;
+        public DateTimeOffset ReceivedAt;
+    }
+    public static class QuotaClient {
+        public static async Task<QuotaReply> Fetch(string token, string account,
+            CancellationToken cancellation, HttpMessageHandler handler) {
+            try {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+                using (var client = new HttpClient(handler ?? new HttpClientHandler {
+                    AllowAutoRedirect = false, UseCookies = false
+                }))
+                using (var request = new HttpRequestMessage(HttpMethod.Get,
+                    "https://chatgpt.com/backend-api/wham/usage")) {
+                    client.Timeout = TimeSpan.FromSeconds(3);
+                    client.MaxResponseContentBufferSize = 256 * 1024;
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    request.Headers.Add("ChatGPT-Account-Id", account);
+                    request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                    using (var response = await client.SendAsync(request,
+                        HttpCompletionOption.ResponseContentRead, cancellation).ConfigureAwait(false)) {
+                        int code = (int)response.StatusCode;
+                        if (code != 200) return new QuotaReply { Status = "HTTP " + code };
+                        return new QuotaReply {
+                            Status = "OK", ReceivedAt = DateTimeOffset.UtcNow,
+                            Json = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                        };
+                    }
+                }
+            } catch (OperationCanceledException) {
+                return new QuotaReply { Status = cancellation.IsCancellationRequested ? "Canceled" : "Timeout" };
+            } catch {
+                // Never return exception text, headers, or credentials to the UI/log.
+                return new QuotaReply { Status = "NetworkError" };
+            }
+        }
+    }
+}
+'@
+}
+
+function Format-QuotaWindow($Window, [DateTimeOffset]$ReceivedAt, [switch]$IsPrimary) {
+    if ($null -eq $Window) { return [pscustomobject]@{ Text='未提供'; Detail='未提供此窗口'; Remaining=$null } }
+    $duration = '週期未知'
+    $seconds = 0.0
+    if ([double]::TryParse([string]$Window.limit_window_seconds, [ref]$seconds) -and $seconds -gt 0) {
+        $duration = if ($seconds % 86400 -eq 0) { "$($seconds / 86400)d" }
+                    elseif ($seconds % 3600 -eq 0) { "$($seconds / 3600)h" }
+                    else { "$([Math]::Round($seconds / 60, 1))m" }
+    }
+    $remaining = '未知'
+    $remainingValue = $null
+    $used = 0.0
+    if ($null -ne $Window.used_percent -and [double]::TryParse([string]$Window.used_percent, [ref]$used) -and
+        ![double]::IsNaN($used) -and ![double]::IsInfinity($used)) {
+        $remainingValue = [Math]::Round([Math]::Max(0, [Math]::Min(100, 100 - $used)), 1)
+        $remaining = "$remainingValue%"
+    }
+    $reset = $null
+    $value = 0L
+    if ($null -ne $Window.reset_at -and [long]::TryParse([string]$Window.reset_at, [ref]$value) -and $value -gt 0) {
+        try { $reset = [DateTimeOffset]::FromUnixTimeSeconds($value) } catch { }
+    } elseif ($null -ne $Window.reset_after_seconds -and [long]::TryParse([string]$Window.reset_after_seconds, [ref]$value) -and $value -ge 0) {
+        try { $reset = $ReceivedAt.AddSeconds($value) } catch { }
+    }
+    $countdown = '重置未知'
+    $detail = "$duration / 剩餘 $remaining / 重置時間未知"
+    if ($null -ne $reset) {
+        $minutes = [Math]::Ceiling(($reset - [DateTimeOffset]::UtcNow).TotalMinutes)
+        if ($minutes -le 0) {
+            $countdown = '待重新整理'
+        } else {
+            $is5h = $IsPrimary -or ($duration -eq '5h') -or ($seconds -gt 0 -and $seconds -le 18000)
+            $showResetTime = $is5h -or ($minutes -lt 720)
+            if ($showResetTime) {
+                $localReset = $reset.ToLocalTime()
+                $countdown = if ($localReset.Date -eq [DateTime]::Today) {
+                    $localReset.ToString('HH:mm')
+                } else {
+                    $localReset.ToString('MM/dd HH:mm')
+                }
+            } else {
+                $countdown = if ($minutes -ge 1440) {
+                    "$([Math]::Round($minutes / 1440, 1))d"
+                } else {
+                    '{0}h{1:00}m' -f [Math]::Floor($minutes / 60), ($minutes % 60)
+                }
+            }
+        }
+        $detail = "$duration / 剩餘 $remaining / 重置 $($reset.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))"
+    }
+    [pscustomobject]@{ Text="$duration $remaining ($countdown)"; Detail=$detail; Remaining=$remainingValue }
+}
+
+function Get-QuotaColor($Remaining) {
+    if ($null -eq $Remaining) { return [Drawing.Color]::DimGray }
+    if ($Remaining -le 0) { return [Drawing.Color]::Firebrick }
+    if ($Remaining -lt 30) { return [Drawing.Color]::DarkOrange }
+    if ($Remaining -lt 70) { return [Drawing.Color]::ForestGreen }
+    return [Drawing.Color]::RoyalBlue
+}
+
+function ConvertFrom-QuotaReply($Reply) {
+    $result = [pscustomobject]@{ Plan='—'; Primary='未知'; Secondary='未知'; PrimaryRemaining=$null; SecondaryRemaining=$null; Status='查詢失敗'; Detail='' }
+    if ($Reply.Status -ne 'OK') {
+        $result.Status = switch ($Reply.Status) {
+            'HTTP 401' { '需重新授權' }
+            'HTTP 403' { '存取受限' }
+            'HTTP 429' { '稍後重試' }
+            'Timeout' { '查詢逾時' }
+            'Canceled' { '已取消' }
+            'NetworkError' { '連線失敗' }
+            default { '服務無法使用' }
+        }
+        $result.Detail = if ($Reply.Status -eq 'HTTP 401') { '憑證可能過期或已失效；請重新登入並儲存。不會自動換發 Token 或修改備份。' } else { $result.Status }
+        return $result
+    }
+    try {
+        $data = $Reply.Json | ConvertFrom-Json
+        if (!$data.rate_limit -and !$data.plan_type -and !$data.additional_rate_limits) { throw 'schema' }
+        if ($data.plan_type -is [string]) { $result.Plan = $data.plan_type }
+                $primary = Format-QuotaWindow $data.rate_limit.primary_window $Reply.ReceivedAt -IsPrimary
+        $secondary = Format-QuotaWindow $data.rate_limit.secondary_window $Reply.ReceivedAt
+        if ($null -ne $secondary.Remaining -and $secondary.Remaining -le 0) {
+            $primary.Remaining = 0
+            $primary.Text = if ($primary.Text -match '\s') { $primary.Text -replace '^(\S+)\s+\S+', '$1 0%' } else { '0%' }
+            $primary.Detail = ($primary.Detail -replace '/ 剩餘 (?:未知|[\d.]+%) /', '/ 剩餘 0% /') + '（週額度已用盡）'
+        }
+        $result.Primary = $primary.Text; $result.Secondary = $secondary.Text
+        $result.PrimaryRemaining = $primary.Remaining; $result.SecondaryRemaining = $secondary.Remaining
+        $result.Status = '已更新'
+        $details = @("查詢時間：$($Reply.ReceivedAt.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))", "主要：$($primary.Detail)", "次要：$($secondary.Detail)")
+        foreach ($extra in @($data.additional_rate_limits)) {
+            if ($null -eq $extra) { continue }
+            $label = if ($extra.limit_name) { [string]$extra.limit_name } else { '其他額度' }
+            $a = Format-QuotaWindow $extra.rate_limit.primary_window $Reply.ReceivedAt
+            $b = Format-QuotaWindow $extra.rate_limit.secondary_window $Reply.ReceivedAt
+            $details += "$label / $($a.Detail)；$($b.Detail)"
+            $result.Status = '已更新／多額度'
+        }
+        $result.Detail = $details -join "`r`n"
+    } catch { $result.Status = '格式不支援'; $result.Detail = '服務回傳格式無法辨識，未修改憑證。' }
+    return $result
+}
+
+$script:QuotaJobs = @()
+$script:QuotaGeneration = 0
+$script:QuotaQueryStarted = $false
+function Stop-QuotaQueries {
+    $script:QuotaGeneration++
+    $script:QuotaQueryStarted = $false
+    foreach ($job in $script:QuotaJobs) { $job.Cancellation.Cancel(); $job.Cancellation.Dispose() }
+    $script:QuotaJobs = @()
+}
+
+function Start-QuotaQuery([byte[]]$Bytes, [string]$Key) {
+    $auth = $script:Utf8.GetString($Bytes) | ConvertFrom-Json
+    $cancel = New-Object Threading.CancellationTokenSource
+    $task = [CodexSwitcher.QuotaClient]::Fetch($auth.tokens.access_token, $auth.tokens.account_id, $cancel.Token, $null)
+    $script:QuotaJobs += [pscustomobject]@{ Key=$Key; Generation=$script:QuotaGeneration; Cancellation=$cancel; Task=$task }
+    $script:QuotaQueryStarted = $true
+}
+
+function Update-QuotaResults {
+    if ($form.IsDisposed -or $form.Disposing) { Stop-QuotaQueries; return }
+    foreach ($job in @($script:QuotaJobs)) {
+        if (!$job.Task.IsCompleted) { continue }
+        try {
+            if ($job.Generation -ne $script:QuotaGeneration -or !$list.Items.ContainsKey($job.Key)) { continue }
+            $quota = ConvertFrom-QuotaReply ($job.Task.GetAwaiter().GetResult())
+            $item = $list.Items[$job.Key]
+            $item.SubItems[2].Text = $quota.Plan
+            $item.SubItems[3].Text = $quota.Primary
+            $item.SubItems[4].Text = $quota.Secondary
+            $item.UseItemStyleForSubItems = $false
+            $item.SubItems[3].ForeColor = Get-QuotaColor $quota.PrimaryRemaining
+            $item.SubItems[4].ForeColor = Get-QuotaColor $quota.SecondaryRemaining
+            $item.SubItems[6].Text = $quota.Status
+            $item.ToolTipText = $quota.Detail
+        } finally {
+            $job.Cancellation.Dispose()
+            $script:QuotaJobs = @($script:QuotaJobs | Where-Object { $_ -ne $job })
+        }
+    }
+    if ($script:QuotaQueryStarted -and !$script:QuotaJobs.Count) {
+        if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss') + "`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
+        $script:QuotaQueryStarted = $false
+    }
+}
+
 function Invoke-SelfTest {
     $originalStore = $script:StorePath
     $originalCodex = $script:CodexPath
     $originalAuth = $script:AuthPath
+    $originalLog = $script:LogPath
     $sandbox = Join-Path ([IO.Path]::GetTempPath()) ('CodexSwitcherTest-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($sandbox) | Out-Null
     try {
         $script:StorePath = Join-Path $sandbox 'backups'
         $script:CodexPath = $sandbox
         $script:AuthPath = Join-Path $sandbox 'auth.json'
+        $script:LogPath = Join-Path $script:StorePath 'switcher.log'
         $preservedPaths = @('config.toml', '.codex-global-state.json', 'state_5.sqlite', 'sessions\existing.jsonl', 'worktrees\existing\source.txt', 'projects\existing\source.txt')
         $preserved = @{}
         foreach ($relative in $preservedPaths) {
@@ -427,6 +631,7 @@ function Invoke-SelfTest {
         'PASS: 加密儲存、帳號識別、token 更新、切換、還原、工作區及設定保留、格式檢查、儲存模式、程序辨識、CLI 探測。未讀取真實憑證或重啟 Codex。'
     } finally {
         $script:StorePath=$originalStore; $script:CodexPath=$originalCodex; $script:AuthPath=$originalAuth
+        $script:LogPath=$originalLog
         if ([IO.Path]::GetFullPath($sandbox).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $sandbox -Leaf) -like 'CodexSwitcherTest-*') { Remove-Item -LiteralPath $sandbox -Recurse -Force }
     }
 }
@@ -441,6 +646,7 @@ if ($CheckEnvironment) {
 }
 
 [Windows.Forms.Application]::EnableVisualStyles()
+Initialize-QuotaClient
 $mutex = New-Object Threading.Mutex($false, 'Local\CodexAccountSwitcher')
 $acquired = $false
 try { $acquired = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
@@ -448,7 +654,7 @@ if (!$acquired -and !$PreviewPath) { [Windows.Forms.MessageBox]::Show('帳號切
 
 $form = New-Object Windows.Forms.Form
 $form.Text = 'Codex 帳號切換工具'
-$form.ClientSize = New-Object Drawing.Size(740, 510)
+$form.ClientSize = New-Object Drawing.Size(1120, 540)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -471,6 +677,7 @@ function New-Button([string]$Text, [int]$X, [int]$Y, [int]$Width, [scriptblock]$
 }
 function Set-Status([string]$Message) { $status.Text = $Message; $status.Refresh() }
 function Invoke-Action([scriptblock]$Action) {
+    Stop-QuotaQueries
     $form.UseWaitCursor=$true
     foreach ($button in $script:Buttons) { $button.Enabled=$false }
     try { & $Action }
@@ -479,9 +686,15 @@ function Invoke-Action([scriptblock]$Action) {
         Set-Status $_.Exception.Message
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, '未完成操作', 'OK', 'Warning') | Out-Null
     }
-    finally { $form.UseWaitCursor=$false; foreach ($button in $script:Buttons) { $button.Enabled=$true } }
+    finally {
+        if (!$script:QuotaJobs.Count) { Refresh-Accounts }
+        $form.UseWaitCursor=$false
+        foreach ($button in $script:Buttons) { $button.Enabled=$true }
+    }
 }
 function Refresh-Accounts {
+    Stop-QuotaQueries
+    if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = "最後查詢：查詢中…`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
     $list.Items.Clear()
     $currentKey = ''
     try {
@@ -496,29 +709,35 @@ function Refresh-Accounts {
             $record = Read-Backup $file.FullName
             $item = New-Object Windows.Forms.ListViewItem($record.Name)
             [void]$item.SubItems.Add($record.Email)
-            [void]$item.SubItems.Add($record.Saved)
+            foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
             [void]$item.SubItems.Add($(if ($record.Key -eq $currentKey) { '目前' } else { '' }))
+            [void]$item.SubItems.Add('查詢中…')
+            [void]$item.SubItems.Add($record.Saved)
+            $item.Name=$record.Key
             $item.Tag=$record.Path
             [void]$list.Items.Add($item)
+            $bytes = if ($record.Key -eq $currentKey) { $current.Bytes } else { $record.Bytes }
+            Start-QuotaQuery $bytes $record.Key
         } catch { $bad++ }
     }
     Write-SwitcherLog 'DEBUG' '刷新清單完成' "CurrentKey=$currentKey, Backups=$($list.Items.Count), Corrupted=$bad"
+    if (!$script:QuotaJobs.Count -and $null -ne $lastQueryLabel) { $lastQueryLabel.Text = "最後查詢：無可查詢帳號`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" }
     if ($bad) { Set-Status "有 $bad 個備份無法解密，未列入清單；原檔已保留。" }
 }
 
 $title=New-Label 'Codex 帳號切換' 24 18 520 34
 $title.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 17, [Drawing.FontStyle]::Bold)
-$viewLog=New-Button '查看日誌 (Log)' 554 16 158 {
+$viewLog=New-Button '查看日誌 (Log)' 934 16 158 {
     if (!(Test-Path -LiteralPath $script:LogPath)) {
         Write-SwitcherLog 'INFO' '切換工具日誌初始化'
     }
     Start-Process notepad.exe -ArgumentList "`"$script:LogPath`""
 }
-$currentLabel=New-Label '正在讀取登入檔…' 26 62 686 44
+$currentLabel=New-Label '正在讀取登入檔…' 26 62 1066 44
 $null=New-Label '帳號名稱' 26 112 90 28
 $nameBox=New-Object Windows.Forms.TextBox
-$nameBox.SetBounds(120,109,390,30); $nameBox.MaxLength=80; $form.Controls.Add($nameBox)
-$save=New-Button '儲存目前帳號' 528 106 184 {
+$nameBox.SetBounds(120,109,770,30); $nameBox.MaxLength=80; $form.Controls.Add($nameBox)
+$save=New-Button '儲存目前帳號' 908 106 184 {
     Invoke-Action {
         $current=Read-Current
         Backup-Current $current $nameBox.Text
@@ -527,8 +746,8 @@ $save=New-Button '儲存目前帳號' 528 106 184 {
     }
 }
 $list=New-Object Windows.Forms.ListView
-$list.SetBounds(26,158,686,206); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false
-foreach ($column in @(@('名稱',155),@('帳號',260),@('備份時間',185),@('狀態',65))) { [void]$list.Columns.Add($column[0],$column[1]) }
+$list.SetBounds(26,158,1066,206); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
+foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$list.Columns.Add($column[0],$column[1]) }
 $form.Controls.Add($list)
 $switch=New-Button '切換並重新啟動' 26 380 160 {
     Invoke-Action {
@@ -550,18 +769,32 @@ $restore=New-Button '還原上次切換' 366 380 150 {
         Refresh-Accounts
     }
 }
-$refresh=New-Button '重新整理' 526 380 186 { Invoke-Action { Refresh-Accounts } }
-$status=New-Label '只換 auth，不執行登出；保留現有工作區。已被登出撤銷的備份需重新登入並儲存。' 26 430 686 50
+$refresh=New-Button '重新整理帳號與額度' 906 380 186 { Invoke-Action { Refresh-Accounts } }
+$lastQueryLabel=New-Label "最後查詢：尚未查詢`r`n紅 0%｜黃 <30%｜綠 <70%｜藍 ≥70%" 842 418 250 48
+$lastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 7.5)
+$lastQueryLabel.TextAlign='MiddleCenter'
+$lastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
+$status=New-Label '只換 auth，不執行登出；保留現有工作區。已被登出撤銷的備份需重新登入並儲存。' 26 430 800 40
 $status.ForeColor=[Drawing.Color]::FromArgb(45,75,90)
-$note=New-Label '備份以 Windows 使用者加密保存在 LocalAppData；僅支援 auth.json。' 26 484 686 22
+$note=New-Label '額度唯讀查詢，不自動換發 Token。倒數為查詢時快照；滑鼠停留帳號列可查看重置時間及其他額度。' 26 480 1066 42
 $note.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8)
 $script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog)
+$quotaTimer = New-Object Windows.Forms.Timer
+$quotaTimer.Interval = 200
+$quotaTimer.Add_Tick({ Update-QuotaResults })
+$form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries })
 try {
     if ($PreviewPath) {
         $currentLabel.Text='登入檔帳號：account-a@example.invalid'
         $nameBox.Text='工作帳號'
         $item=New-Object Windows.Forms.ListViewItem('工作帳號')
-        foreach ($value in @('account-a@example.invalid','2026-09-17 12:00:00','目前')) { [void]$item.SubItems.Add($value) }
+        foreach ($value in @('account-a@example.invalid','plus','5h 78% (15:08)','7d 84% (6.8d)','目前','已更新','2026-09-17 12:00')) { [void]$item.SubItems.Add($value) }
+        $item.UseItemStyleForSubItems=$false
+        $item.SubItems[3].ForeColor=Get-QuotaColor 78
+        $item.SubItems[4].ForeColor=Get-QuotaColor 84
+        [void]$list.Items.Add($item)
+        $item=New-Object Windows.Forms.ListViewItem('備用帳號')
+        foreach ($value in @('account-b@example.invalid','—','未知','未知','','需重新授權','2026-09-16 09:00')) { [void]$item.SubItems.Add($value) }
         [void]$list.Items.Add($item)
         $form.Show(); $form.Refresh()
         $bitmap=New-Object Drawing.Bitmap($form.Width,$form.Height)
@@ -570,10 +803,12 @@ try {
     } else {
         Write-SwitcherLog 'INFO' '切換工具視窗已開啟' "PID=$PID"
         Refresh-Accounts
+        $quotaTimer.Start()
         [void]$form.ShowDialog()
     }
 } finally {
-    Write-SwitcherLog 'INFO' '切換工具視窗已結束'
+    $quotaTimer.Stop(); $quotaTimer.Dispose(); Stop-QuotaQueries
+    if (!$PreviewPath) { Write-SwitcherLog 'INFO' '切換工具視窗已結束' }
     $form.Dispose()
     if ($acquired) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
