@@ -33,7 +33,7 @@ namespace CodexAccountSwitcherInstaller
                 {
                     string defaultDir = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        @"Programs\CodexAccountSwitcher"
+                        @"Programs\CodexAntigravitySwitcher"
                     );
                     InstallerLogic.PerformInstall(defaultDir, true, true, false);
                 }
@@ -53,6 +53,16 @@ namespace CodexAccountSwitcherInstaller
     {
         public static void PerformInstall(string destDir, bool createDesktop, bool createStartMenu, bool launchAfter)
         {
+            string legacyDir = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                @"Programs\CodexAccountSwitcher"
+            )).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string targetDir = Path.GetFullPath(destDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (targetDir.Equals(legacyDir, StringComparison.OrdinalIgnoreCase) ||
+                targetDir.StartsWith(legacyDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("不可覆寫既有 CodexAccountSwitcher 安裝目錄。請選擇獨立目錄。");
+            }
             if (!Directory.Exists(destDir))
             {
                 Directory.CreateDirectory(destDir);
@@ -84,6 +94,8 @@ namespace CodexAccountSwitcherInstaller
 
             // 建立捷徑 (透過 WScript.Shell)
             Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+            string icoFile = Path.Combine(destDir, "app.ico");
+            string iconLocation = File.Exists(icoFile) ? icoFile : (Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "shell32.dll") + ",44");
             if (shellType != null)
             {
                 dynamic shell = Activator.CreateInstance(shellType);
@@ -92,10 +104,11 @@ namespace CodexAccountSwitcherInstaller
                     try
                     {
                         string desk = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-                        dynamic link = shell.CreateShortcut(Path.Combine(desk, "Codex 帳號切換.lnk"));
+                        dynamic link = shell.CreateShortcut(Path.Combine(desk, "Codex 與 Antigravity 帳號切換.lnk"));
                         link.TargetPath = targetExe;
                         link.WorkingDirectory = destDir;
-                        link.Description = "Codex 帳號切換工具";
+                        link.IconLocation = iconLocation;
+                        link.Description = "Codex 與 Antigravity 帳號切換工具";
                         link.Save();
                     }
                     catch { }
@@ -106,10 +119,11 @@ namespace CodexAccountSwitcherInstaller
                     try
                     {
                         string sm = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
-                        dynamic link = shell.CreateShortcut(Path.Combine(sm, "Codex 帳號切換.lnk"));
+                        dynamic link = shell.CreateShortcut(Path.Combine(sm, "Codex 與 Antigravity 帳號切換.lnk"));
                         link.TargetPath = targetExe;
                         link.WorkingDirectory = destDir;
-                        link.Description = "Codex 帳號切換工具";
+                        link.IconLocation = iconLocation;
+                        link.Description = "Codex 與 Antigravity 帳號切換工具";
                         link.Save();
                     }
                     catch { }
@@ -119,16 +133,16 @@ namespace CodexAccountSwitcherInstaller
             // 寫入 Windows 應用程式清單 (新增或移除程式)
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexAccountSwitcher"))
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexAntigravitySwitcher"))
                 {
                     if (key != null)
                     {
-                        key.SetValue("DisplayName", "Codex 帳號切換工具");
-                        key.SetValue("DisplayVersion", "1.0.0");
+                        key.SetValue("DisplayName", "Codex 與 Antigravity 帳號切換工具");
+                        key.SetValue("DisplayVersion", "1.2.0");
                         key.SetValue("Publisher", "Codex Tools");
                         key.SetValue("InstallLocation", destDir);
                         key.SetValue("UninstallString", "\"" + Path.Combine(destDir, "Uninstall.bat") + "\"");
-                        key.SetValue("DisplayIcon", targetExe);
+                        key.SetValue("DisplayIcon", iconLocation);
                     }
                 }
             }
@@ -166,12 +180,14 @@ namespace CodexAccountSwitcherInstaller
 
         private void InitializeComponent()
         {
-            this.Text = "Codex 帳號切換工具 - 安裝精靈";
+            this.Text = "Codex 與 Antigravity 帳號切換工具 - 安裝精靈";
             this.Size = new Size(540, 380);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.ShowIcon = true;
             this.MaximizeBox = false;
             this.Font = new Font("Microsoft JhengHei UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             // 頂部橫幅
             Panel topPanel = new Panel
@@ -183,7 +199,7 @@ namespace CodexAccountSwitcherInstaller
 
             Label lblTitle = new Label
             {
-                Text = "安裝 Codex 帳號切換工具 (v1.0.0)",
+                Text = "安裝 Codex 與 Antigravity 帳號切換工具 (v1.2.0)",
                 Font = new Font("Microsoft JhengHei UI", 12F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(30, 41, 59),
                 Location = new Point(20, 15),
@@ -213,7 +229,7 @@ namespace CodexAccountSwitcherInstaller
 
             string defaultDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                @"Programs\CodexAccountSwitcher"
+                @"Programs\CodexAntigravitySwitcher"
             );
 
             txtPath = new TextBox
@@ -265,7 +281,7 @@ namespace CodexAccountSwitcherInstaller
 
             chkLaunch = new CheckBox
             {
-                Text = "安裝完成後立即啟動 Codex 帳號切換器",
+                Text = "安裝完成後立即啟動 Codex 與 Antigravity 帳號切換器",
                 Checked = true,
                 Location = new Point(25, 230),
                 AutoSize = true
@@ -331,7 +347,7 @@ namespace CodexAccountSwitcherInstaller
                 );
 
                 lblStatus.Text = "安裝完成！";
-                MessageBox.Show(this, "Codex 帳號切換工具已成功安裝！\n\n您可隨時由桌面捷徑啟動。", "安裝成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Codex 與 Antigravity 帳號切換工具已成功安裝！\n\n您可隨時由桌面捷徑啟動。", "安裝成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 this.Close();
             }
             catch (Exception ex)

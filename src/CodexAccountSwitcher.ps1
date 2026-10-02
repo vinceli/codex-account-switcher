@@ -1,12 +1,155 @@
-﻿param([switch]$SelfTest, [string]$PreviewPath, [switch]$CheckEnvironment)
+﻿param([switch]$SelfTest, [string]$PreviewPath, [string]$PreviewAntigravityPath, [switch]$CheckEnvironment, [string]$IsolatedAntigravityTestPath)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
-$script:StorePath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAccountSwitcher'
+if (-not ('NativeGuiHelper' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Drawing, System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+using System.Runtime.InteropServices;
+
+public static class NativeGuiHelper {
+    [DllImport("shell32.dll", SetLastError = true)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint PrivateExtractIcons(
+        string szFileName, int nIconIndex, int cxIcon, int cyIcon,
+        IntPtr[] phicon, uint[] piconid, uint nIcons, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint WM_SETICON = 0x80;
+    public const int ICON_SMALL = 0;
+    public const int ICON_BIG = 1;
+
+    public static Icon ExtractShell32Icon(int index, int size) {
+        IntPtr[] h = new IntPtr[1];
+        uint[] id = new uint[1];
+        string shell32 = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "shell32.dll");
+        uint count = PrivateExtractIcons(shell32, index, size, size, h, id, 1, 0);
+        if (count > 0 && h[0] != IntPtr.Zero) {
+            try {
+                using (Icon ico = Icon.FromHandle(h[0])) {
+                    return (Icon)ico.Clone();
+                }
+            } finally {
+                DestroyIcon(h[0]);
+            }
+        }
+        return null;
+    }
+}
+'@
+}
+
+function Get-ApplicationIcon {
+    $icoCandidates = @(
+        (Join-Path $PSScriptRoot 'app.ico'),
+        (Join-Path (Split-Path $PSScriptRoot -Parent) 'src\app.ico')
+    )
+    foreach ($cand in $icoCandidates) {
+        if ($cand -and (Test-Path -LiteralPath $cand)) {
+            try {
+                return New-Object System.Drawing.Icon($cand)
+            } catch { }
+        }
+    }
+    try {
+        $extracted = [NativeGuiHelper]::ExtractShell32Icon(44, 32)
+        if ($extracted) { return $extracted }
+    } catch { }
+    return $null
+}
+
+
+if (-not ('NativeGuiHelper' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Drawing, System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+using System.Runtime.InteropServices;
+
+public static class NativeGuiHelper {
+    [DllImport("shell32.dll", SetLastError = true)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint PrivateExtractIcons(
+        string szFileName, int nIconIndex, int cxIcon, int cyIcon,
+        IntPtr[] phicon, uint[] piconid, uint nIcons, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint WM_SETICON = 0x80;
+    public const int ICON_SMALL = 0;
+    public const int ICON_BIG = 1;
+
+    public static Icon ExtractShell32Icon(int index, int size) {
+        IntPtr[] h = new IntPtr[1];
+        uint[] id = new uint[1];
+        string shell32 = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "shell32.dll");
+        uint count = PrivateExtractIcons(shell32, index, size, size, h, id, 1, 0);
+        if (count > 0 && h[0] != IntPtr.Zero) {
+            try {
+                using (Icon ico = Icon.FromHandle(h[0])) {
+                    return (Icon)ico.Clone();
+                }
+            } finally {
+                DestroyIcon(h[0]);
+            }
+        }
+        return null;
+    }
+}
+'@
+}
+
+function Get-ApplicationIcon {
+    $icoCandidates = @(
+        (Join-Path $PSScriptRoot 'app.ico'),
+        (Join-Path (Split-Path $PSScriptRoot -Parent) 'src\app.ico')
+    )
+    foreach ($cand in $icoCandidates) {
+        if ($cand -and (Test-Path -LiteralPath $cand)) {
+            try {
+                return New-Object System.Drawing.Icon($cand)
+            } catch { }
+        }
+    }
+    try {
+        $extracted = [NativeGuiHelper]::ExtractShell32Icon(44, 32)
+        if ($extracted) { return $extracted }
+    } catch { }
+    return $null
+}
+$script:StorePath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAntigravitySwitcher'
 $script:CodexPath = if ($env:CODEX_HOME) { [IO.Path]::GetFullPath($env:CODEX_HOME) } else { Join-Path $env:USERPROFILE '.codex' }
+if ($IsolatedAntigravityTestPath) {
+    $isolated = [IO.Path]::GetFullPath($IsolatedAntigravityTestPath)
+    $normalStore = [IO.Path]::GetFullPath($script:StorePath).TrimEnd('\') + '\'
+    $legacyStore = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAccountSwitcher')).TrimEnd('\') + '\'
+    if ($isolated.TrimEnd('\') -ieq $normalStore.TrimEnd('\') -or $isolated.StartsWith($normalStore, [StringComparison]::OrdinalIgnoreCase) -or
+        $isolated.TrimEnd('\') -ieq $legacyStore.TrimEnd('\') -or $isolated.StartsWith($legacyStore, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '測試資料目錄不能位於既有帳號備份目錄內。'
+    }
+    $script:StorePath = $isolated
+    $script:CodexPath = Join-Path $isolated 'unused-codex-home'
+}
 $script:AuthPath = Join-Path $script:CodexPath 'auth.json'
 $script:Utf8 = New-Object Text.UTF8Encoding($true)
 $script:LogPath = Join-Path $script:StorePath 'switcher.log'
+. (Join-Path $PSScriptRoot 'AntigravityCredential.ps1')
+. (Join-Path $PSScriptRoot 'AntigravityQuota.ps1')
 
 function Write-SwitcherLog([string]$Level, [string]$Message, [string]$Detail = '') {
     try {
@@ -81,6 +224,37 @@ function Read-Backup([string]$Path) {
         if ($record.Key -ne $identity.Key) { throw 'identity' }
         [pscustomobject]@{ Name = [string]$record.Name; Key = $identity.Key; Email = $identity.Email; Saved = [string]$record.Saved; Bytes = $bytes; Path = $Path }
     } catch { throw '無法解密或驗證備份。備份只能由原本的 Windows 使用者開啟。' }
+}
+
+function Import-LegacyCodexBackups([string]$LegacyStore) {
+    if (!(Test-Path -LiteralPath $LegacyStore -PathType Container)) { return 0 }
+    $sources = @(
+        foreach ($file in @(Get-ChildItem -LiteralPath $LegacyStore -Filter '*.bin' -File)) {
+            $record = Read-Backup $file.FullName
+            if ($file.BaseName -cne $record.Key) { throw '舊版備份檔名與帳號身分不符，已停止繼承。' }
+            [pscustomobject]@{ Source=$file.FullName; Name=$file.Name; Key=$record.Key; Bytes=$record.Bytes }
+        }
+    )
+    if (!$sources.Count) { return 0 }
+    [IO.Directory]::CreateDirectory($script:StorePath) | Out-Null
+    $imported = 0
+    foreach ($source in $sources) {
+        $target = Join-Path $script:StorePath $source.Name
+        if (Test-Path -LiteralPath $target) { continue }
+        $temp = Join-Path $script:StorePath ([guid]::NewGuid().ToString('N') + '.tmp')
+        try {
+            [IO.File]::Copy($source.Source, $temp, $false)
+            $copy = Read-Backup $temp
+            if ($copy.Key -ne $source.Key -or [Convert]::ToBase64String($copy.Bytes) -ne [Convert]::ToBase64String($source.Bytes)) {
+                throw '繼承備份驗證失敗。'
+            }
+            [IO.File]::Move($temp, $target)
+            $imported++
+        } finally {
+            if (Test-Path -LiteralPath $temp) { [IO.File]::Delete($temp) }
+        }
+    }
+    return $imported
 }
 
 function Save-Backup([byte[]]$Bytes, [string]$Name, [string]$Path) {
@@ -228,6 +402,7 @@ function Switch-Account([string]$Path) {
 
 function Prompt-AccountName([string]$DefaultName, [string]$Email) {
     $dialog = New-Object Windows.Forms.Form
+    if ($form -and $form.Icon) { $dialog.Icon = $form.Icon; $dialog.ShowIcon = $true }
     $dialog.Text = '儲存登入帳號'
     $dialog.ClientSize = New-Object Drawing.Size(420, 160)
     $dialog.StartPosition = 'CenterParent'
@@ -583,6 +758,19 @@ function Invoke-SelfTest {
         $aPath = Join-Path $script:StorePath ((Get-Identity $a).Key + '.bin')
         Check ((Read-Backup $aPath).Name -eq '帳號 A') '加密備份往返'
         Check (![IO.File]::ReadAllText($aPath).Contains('old-A')) '備份不是明文'
+        $testStore = $script:StorePath
+        $legacyStore = Join-Path $sandbox 'legacy-backups'
+        $script:StorePath = $legacyStore
+        Save-Backup $a '舊版 A' ''
+        Save-Backup $b '舊版 B' ''
+        Save-Backup (Fake-Auth 'C' 'token-C') '舊版 C' ''
+        $script:StorePath = Join-Path $sandbox 'imported-backups'
+        Check ((Import-LegacyCodexBackups $legacyStore) -eq 3) '三份舊版備份繼承'
+        Check (@(Get-ChildItem -LiteralPath $legacyStore -Filter '*.bin' -File).Count -eq 3) '舊版原件保留'
+        Save-Backup $updated '新版 A' ''
+        Check ((Import-LegacyCodexBackups $legacyStore) -eq 0) '再次啟動不重複匯入'
+        Check ((Read-Backup (Join-Path $script:StorePath ((Get-Identity $a).Key + '.bin'))).Name -eq '新版 A') '不覆寫新版既有備份'
+        $script:StorePath = $testStore
         Write-Atomic $script:AuthPath $updated
         Install-Auth $b
         Check ((Read-Current).Identity.Key -eq (Get-Identity $b).Key) '切換目標帳號'
@@ -628,7 +816,10 @@ function Invoke-SelfTest {
         try { Read-Backup $aPath | Out-Null } catch { $rejected=$true }
         $cliCandidate = Get-CodexCliPath
         Check (![string]::IsNullOrWhiteSpace($cliCandidate)) '探測 codex.exe CLI 路徑'
-        'PASS: 加密儲存、帳號識別、token 更新、切換、還原、工作區及設定保留、格式檢查、儲存模式、程序辨識、CLI 探測。未讀取真實憑證或重啟 Codex。'
+        $testIcon = Get-ApplicationIcon
+        Check ($null -ne $testIcon) '解析或提取應用程式金鑰匙圖示'
+        if ($testIcon) { $testIcon.Dispose() }
+        'PASS: 加密儲存、舊版備份繼承、帳號識別、token 更新、切換、還原、工作區及設定保留、格式檢查、儲存模式、程序辨識、CLI 探測。未讀取真實憑證或重啟 Codex。'
     } finally {
         $script:StorePath=$originalStore; $script:CodexPath=$originalCodex; $script:AuthPath=$originalAuth
         $script:LogPath=$originalLog
@@ -636,7 +827,7 @@ function Invoke-SelfTest {
     }
 }
 
-if ($SelfTest) { Invoke-SelfTest; exit }
+if ($SelfTest) { Invoke-SelfTest; Invoke-AGSelfTest; Invoke-AGQuotaSelfTest; exit }
 if ($CheckEnvironment) {
     Assert-FileStorage
     $app = Get-DesktopApp
@@ -646,40 +837,82 @@ if ($CheckEnvironment) {
 }
 
 [Windows.Forms.Application]::EnableVisualStyles()
+try {
+    [void][NativeGuiHelper]::SetCurrentProcessExplicitAppUserModelID('CodexTools.CodexAntigravitySwitcher')
+} catch { }
 Initialize-QuotaClient
-$mutex = New-Object Threading.Mutex($false, 'Local\CodexAccountSwitcher')
+Initialize-AGQuotaClient
+$mutexName = if ($IsolatedAntigravityTestPath) { 'Local\CodexAccountSwitcher-AG-IsolatedTest' } else { 'Local\CodexAccountSwitcher' }
+$mutex = New-Object Threading.Mutex($false, $mutexName)
 $acquired = $false
 try { $acquired = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
 if (!$acquired -and !$PreviewPath) { [Windows.Forms.MessageBox]::Show('帳號切換工具已開啟。') | Out-Null; $mutex.Dispose(); exit }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Codex 帳號切換工具'
-$form.ClientSize = New-Object Drawing.Size(1120, 540)
+$appIcon = Get-ApplicationIcon
+$script:AppIconBig = $null
+if ($appIcon) {
+    $form.Icon = $appIcon
+    try {
+        $icoFile = Join-Path $PSScriptRoot 'app.ico'
+        if (Test-Path -LiteralPath $icoFile) {
+            $script:AppIconBig = New-Object Drawing.Icon($icoFile, 128, 128)
+        }
+    } catch { }
+    if (!$script:AppIconBig) {
+        try { $script:AppIconBig = [NativeGuiHelper]::ExtractShell32Icon(44, 256) } catch { }
+    }
+    $form.Add_HandleCreated({
+        try {
+            $targetBig = if ($script:AppIconBig) { $script:AppIconBig.Handle } else { $this.Icon.Handle }
+            [NativeGuiHelper]::SendMessage($this.Handle, [NativeGuiHelper]::WM_SETICON, [IntPtr][NativeGuiHelper]::ICON_BIG, $targetBig) | Out-Null
+            [NativeGuiHelper]::SendMessage($this.Handle, [NativeGuiHelper]::WM_SETICON, [IntPtr][NativeGuiHelper]::ICON_SMALL, $this.Icon.Handle) | Out-Null
+        } catch { }
+    })
+}
+$form.Text = 'Codex / Antigravity 帳號切換工具'
+$form.ClientSize = New-Object Drawing.Size(1140, 580)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
 $form.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 10)
 $form.BackColor = [Drawing.Color]::FromArgb(247,248,250)
 $form.AutoScaleMode = 'Dpi'
+$tabs = New-Object Windows.Forms.TabControl
+$tabs.SetBounds(5, 5, 1130, 565)
+$codexTab = New-Object Windows.Forms.TabPage
+$codexTab.Text = 'Codex'
+$agTab = New-Object Windows.Forms.TabPage
+$agTab.Text = 'Antigravity'
+[void]$tabs.TabPages.Add($codexTab)
+[void]$tabs.TabPages.Add($agTab)
+$form.Controls.Add($tabs)
+if ($IsolatedAntigravityTestPath) { $form.Text += '（Antigravity 獨立測試）'; $tabs.SelectedTab = $agTab }
+$script:CurrentPage = $codexTab
 
 function New-Label([string]$Text, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
     $control = New-Object Windows.Forms.Label
     $control.Text=$Text; $control.SetBounds($X,$Y,$Width,$Height)
-    $form.Controls.Add($control)
+    $script:CurrentPage.Controls.Add($control)
     return $control
 }
 function New-Button([string]$Text, [int]$X, [int]$Y, [int]$Width, [scriptblock]$Action) {
     $control = New-Object Windows.Forms.Button
     $control.Text=$Text; $control.SetBounds($X,$Y,$Width,36)
     $control.Add_Click($Action)
-    $form.Controls.Add($control)
+    $script:CurrentPage.Controls.Add($control)
     return $control
 }
-function Set-Status([string]$Message) { $status.Text = $Message; $status.Refresh() }
-function Invoke-Action([scriptblock]$Action) {
-    Stop-QuotaQueries
+function Set-Status([string]$Message) {
+    $label = if ($tabs.SelectedTab -eq $agTab) { $agStatus } else { $status }
+    $label.Text = $Message; $label.Refresh()
+}
+
+function Invoke-Action([scriptblock]$Action, [scriptblock]$Refresh = { Refresh-Accounts }) {
+    if ($tabs.SelectedTab -eq $codexTab) { Stop-QuotaQueries }
+    else { Stop-AGQuotaQueries }
     $form.UseWaitCursor=$true
-    foreach ($button in $script:Buttons) { $button.Enabled=$false }
+    foreach ($button in $script:Buttons) { if ($button -is [Windows.Forms.Button]) { $button.Enabled=$false } }
     try { & $Action }
     catch {
         Write-SwitcherLog 'ERROR' '操作未完成或發生異常' "$($_.Exception.Message)"
@@ -687,9 +920,12 @@ function Invoke-Action([scriptblock]$Action) {
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, '未完成操作', 'OK', 'Warning') | Out-Null
     }
     finally {
-        if (!$script:QuotaJobs.Count) { Refresh-Accounts }
+        if ($tabs.SelectedTab -eq $agTab -or !$script:QuotaJobs.Count) { & $Refresh }
         $form.UseWaitCursor=$false
-        foreach ($button in $script:Buttons) { $button.Enabled=$true }
+        foreach ($button in $script:Buttons) { if ($button -is [Windows.Forms.Button]) { $button.Enabled=$true } }
+        if ($IsolatedAntigravityTestPath) {
+            foreach ($button in $codexTab.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled=$false } }
+        }
     }
 }
 function Refresh-Accounts {
@@ -725,6 +961,38 @@ function Refresh-Accounts {
     if ($bad) { Set-Status "有 $bad 個備份無法解密，未列入清單；原檔已保留。" }
 }
 
+function Refresh-AGAccounts {
+    Stop-AGQuotaQueries
+    if ($null -ne $agLastQueryLabel) { $agLastQueryLabel.Text = '最後查詢：查詢中…' }
+    $agList.Items.Clear()
+    $currentKey = ''
+    try {
+        $current = Read-AGCurrent
+        $currentKey = $current.Identity.Key
+        $agCurrentLabel.Text = '目前登入：' + $current.Identity.Email
+        $agNameBox.Text = $current.Identity.Email
+    } catch { $agCurrentLabel.Text = '登入狀態：' + $_.Exception.Message }
+    $bad = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $script:AGStorePath -Filter '*.bin' -ErrorAction SilentlyContinue)) {
+        try {
+            $record = Read-AGBackup $file.FullName
+            $item = New-Object Windows.Forms.ListViewItem($record.Name)
+            [void]$item.SubItems.Add($record.Email)
+            foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
+            [void]$item.SubItems.Add($(if ($record.Key -eq $currentKey) { '目前' } else { '' }))
+            [void]$item.SubItems.Add('查詢中…')
+            [void]$item.SubItems.Add($record.Saved)
+            $item.Name = $record.Key
+            $item.Tag = $record.Path
+            [void]$agList.Items.Add($item)
+            $entry = if ($record.Key -eq $currentKey) { $current.Entry } else { $record.Entry }
+            Start-AGQuotaQuery $entry.Blob $record.Key
+        } catch { $bad++ }
+    }
+    if (!$script:AGQuotaJobs.Count -and $null -ne $agLastQueryLabel) { $agLastQueryLabel.Text = '最後查詢：無可查詢帳號' }
+    if ($bad) { $agStatus.Text = "有 $bad 個 Antigravity 備份無法解密；原檔已保留。" }
+}
+
 $title=New-Label 'Codex 帳號切換' 24 18 520 34
 $title.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 17, [Drawing.FontStyle]::Bold)
 $viewLog=New-Button '查看日誌 (Log)' 934 16 158 {
@@ -736,7 +1004,7 @@ $viewLog=New-Button '查看日誌 (Log)' 934 16 158 {
 $currentLabel=New-Label '正在讀取登入檔…' 26 62 1066 44
 $null=New-Label '帳號名稱' 26 112 90 28
 $nameBox=New-Object Windows.Forms.TextBox
-$nameBox.SetBounds(120,109,770,30); $nameBox.MaxLength=80; $form.Controls.Add($nameBox)
+$nameBox.SetBounds(120,109,770,30); $nameBox.MaxLength=80; $codexTab.Controls.Add($nameBox)
 $save=New-Button '儲存目前帳號' 908 106 184 {
     Invoke-Action {
         $current=Read-Current
@@ -748,7 +1016,7 @@ $save=New-Button '儲存目前帳號' 908 106 184 {
 $list=New-Object Windows.Forms.ListView
 $list.SetBounds(26,158,1066,206); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
 foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$list.Columns.Add($column[0],$column[1]) }
-$form.Controls.Add($list)
+$codexTab.Controls.Add($list)
 $switch=New-Button '切換並重新啟動' 26 380 160 {
     Invoke-Action {
         if (!$list.SelectedItems.Count) { throw '請先選擇要切換的帳號。' }
@@ -778,11 +1046,63 @@ $status=New-Label '只換 auth，不執行登出；保留現有工作區。已�
 $status.ForeColor=[Drawing.Color]::FromArgb(45,75,90)
 $note=New-Label '額度唯讀查詢，不自動換發 Token。倒數為查詢時快照；滑鼠停留帳號列可查看重置時間及其他額度。' 26 480 1066 42
 $note.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8)
-$script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog)
+$script:CurrentPage = $agTab
+$agTitle = New-Label 'Antigravity 帳號切換' 24 18 520 34
+$agTitle.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 17, [Drawing.FontStyle]::Bold)
+$agCurrentLabel = New-Label '正在讀取登入資料…' 26 62 1066 44
+$null = New-Label '帳號名稱' 26 112 90 28
+$agNameBox = New-Object Windows.Forms.TextBox
+$agNameBox.SetBounds(120,109,770,30); $agNameBox.MaxLength=80; $agTab.Controls.Add($agNameBox)
+$agSave = New-Button '儲存目前帳號' 908 106 184 {
+    Invoke-Action {
+        $current = Read-AGCurrent
+        Save-AGBackup $current $agNameBox.Text ''
+        Set-Status '已加密儲存 Antigravity 認證。'
+    } { Refresh-AGAccounts }
+}
+$agList = New-Object Windows.Forms.ListView
+$agList.SetBounds(26,158,1066,206); $agList.View='Details'; $agList.FullRowSelect=$true; $agList.MultiSelect=$false; $agList.HideSelection=$false; $agList.ShowItemToolTips=$true
+foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$agList.Columns.Add($column[0],$column[1]) }
+$agTab.Controls.Add($agList)
+$agSwitch = New-Button '切換並重新啟動' 26 380 160 {
+    Invoke-Action {
+        if (!$agList.SelectedItems.Count) { throw '請先選擇要切換的 Antigravity 帳號。' }
+        Switch-AGAccount ([string]$agList.SelectedItems[0].Tag)
+    } { Refresh-AGAccounts }
+}
+$agRestore = New-Button '還原上次切換' 366 380 150 {
+    Invoke-Action {
+        $path = Join-Path $script:AGStorePath 'last-switch.rollback'
+        if (!(Test-Path -LiteralPath $path)) { throw '目前沒有 Antigravity 切換還原點。' }
+        Switch-AGAccount $path
+    } { Refresh-AGAccounts }
+}
+$agLogin = New-Button '引導登入新帳號' 196 380 160 {
+    Invoke-Action { Start-AGGuidedLogin } { Refresh-AGAccounts }
+}
+$agRefresh = New-Button '重新整理帳號與額度' 906 380 186 { Invoke-Action { Refresh-AGAccounts } { Refresh-AGAccounts } }
+$agLastQueryLabel=New-Label '最後查詢：尚未查詢' 842 422 250 24
+$agLastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
+$agLastQueryLabel.TextAlign='MiddleCenter'
+$agLastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
+$agLog = New-Button '查看日誌 (Log)' 934 16 158 {
+    if (!(Test-Path -LiteralPath $script:LogPath)) { Write-SwitcherLog 'INFO' '切換工具日誌初始化' }
+    Start-Process notepad.exe -ArgumentList "`"$script:LogPath`""
+}
+$agStatus = New-Label '只切換 Antigravity 認證；保留工作區、對話及設定。' 26 430 1066 40
+$agStatus.ForeColor = [Drawing.Color]::FromArgb(45,75,90)
+$agNote = New-Label '額度唯讀查詢；G 為 Gemini、C 為 Claude/GPT。滑鼠停留帳號列可查看各組重置時間。' 26 480 1066 42
+$agNote.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8)
+$script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog,$agSave,$agSwitch,$agRestore,$agLogin,$agRefresh,$agLog)
+if ($IsolatedAntigravityTestPath) {
+    foreach ($button in $codexTab.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled=$false } }
+    $currentLabel.Text = '獨立測試模式：未讀取既有 Codex 帳號與備份。'
+    $status.Text = '此分頁在獨立測試模式停用。'
+}
 $quotaTimer = New-Object Windows.Forms.Timer
 $quotaTimer.Interval = 200
-$quotaTimer.Add_Tick({ Update-QuotaResults })
-$form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries })
+$quotaTimer.Add_Tick({ Update-QuotaResults; Update-AGQuotaResults })
+$form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries; Stop-AGQuotaQueries })
 try {
     if ($PreviewPath) {
         $currentLabel.Text='登入檔帳號：account-a@example.invalid'
@@ -796,20 +1116,47 @@ try {
         $item=New-Object Windows.Forms.ListViewItem('備用帳號')
         foreach ($value in @('account-b@example.invalid','—','未知','未知','','需重新授權','2026-09-16 09:00')) { [void]$item.SubItems.Add($value) }
         [void]$list.Items.Add($item)
+        $agCurrentLabel.Text = '目前登入：account-b@example.invalid'
+        $agNameBox.Text = '備用帳號'
+        $agItem = New-Object Windows.Forms.ListViewItem('備用帳號')
+        foreach ($value in @('account-b@example.invalid','Pro','G 86% / C 100%','G 48% / C 1%','目前','已更新','2026-09-24 12:00')) { [void]$agItem.SubItems.Add($value) }
+        $agItem.UseItemStyleForSubItems=$false
+        $agItem.SubItems[3].ForeColor=Get-QuotaColor 86
+        $agItem.SubItems[4].ForeColor=Get-QuotaColor 1
+        [void]$agList.Items.Add($agItem)
         $form.Show(); $form.Refresh()
         $bitmap=New-Object Drawing.Bitmap($form.Width,$form.Height)
         try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+        if ($PreviewAntigravityPath) {
+            $tabs.SelectedTab = $agTab
+            $form.Refresh()
+            $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
+            try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewAntigravityPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+        }
         $form.Close()
     } else {
         Write-SwitcherLog 'INFO' '切換工具視窗已開啟' "PID=$PID"
-        Refresh-Accounts
+        if (!$IsolatedAntigravityTestPath) {
+            try {
+                $legacyStore = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAccountSwitcher'
+                $imported = Import-LegacyCodexBackups $legacyStore
+                if ($imported) { Write-SwitcherLog 'INFO' '已繼承舊版 Codex 帳號備份' "Count=$imported" }
+            } catch {
+                Write-SwitcherLog 'WARN' '舊版 Codex 帳號備份繼承未完成' $_.Exception.Message
+                $status.Text = '舊版帳號備份繼承未完成：' + $_.Exception.Message
+            }
+            Refresh-Accounts
+        }
+        Refresh-AGAccounts
         $quotaTimer.Start()
         [void]$form.ShowDialog()
     }
 } finally {
-    $quotaTimer.Stop(); $quotaTimer.Dispose(); Stop-QuotaQueries
+    $quotaTimer.Stop(); $quotaTimer.Dispose(); Stop-QuotaQueries; Stop-AGQuotaQueries
     if (!$PreviewPath) { Write-SwitcherLog 'INFO' '切換工具視窗已結束' }
     $form.Dispose()
+    if ($appIcon) { $appIcon.Dispose() }
+    if ($script:AppIconBig) { $script:AppIconBig.Dispose() }
     if ($acquired) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
 }

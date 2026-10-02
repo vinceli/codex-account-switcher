@@ -2,8 +2,8 @@
 # Codex 帳號切換工具 - 自動化封裝與安全隔離審計建置腳本
 # ==============================================================================
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = "1.0.0",
-    [ValidatePattern('^Setup-CodexAccountSwitcher(?:-[A-Za-z0-9.]+)?\.exe$')][string]$SetupFileName = 'Setup-CodexAccountSwitcher.exe'
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = "1.1.0",
+    [ValidatePattern('^Setup-CodexAntigravitySwitcher(?:-[A-Za-z0-9.]+)?\.exe$')][string]$SetupFileName = 'Setup-CodexAntigravitySwitcher.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,21 +38,26 @@ if (!(Test-Path $installerDir)) { New-Item -ItemType Directory -Path $installerD
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 
-# 2. 編譯 Launcher (若尚未編譯)
+# 2. 編譯 Launcher (內嵌圖示)
 $launcherExe = Join-Path $srcDir 'CodexAccountSwitcher.exe'
 $launcherCs = Join-Path $srcDir 'Launcher.cs'
-if (!(Test-Path $launcherExe) -and (Test-Path $launcherCs)) {
+$appIco = Join-Path $srcDir 'app.ico'
+$iconArg = if (Test-Path -LiteralPath $appIco) { "/win32icon:`"$appIco`"" } else { "" }
+if (Test-Path $launcherCs) {
     Write-Host "編譯啟動器: $launcherExe..."
-    & $cscExe /target:winexe /out:"$launcherExe" "$launcherCs" | Out-Null
+    & $cscExe /target:winexe $iconArg /out:"$launcherExe" "$launcherCs" | Out-Null
 }
 
 # 3. 嚴格白名單複製
 $whitelist = @(
     'CodexAccountSwitcher.exe',
     'CodexAccountSwitcher.ps1',
+    'AntigravityCredential.ps1',
+    'AntigravityQuota.ps1',
     'Launcher.cs',
     'Install.bat',
-    'Uninstall.bat'
+    'Uninstall.bat',
+    'app.ico'
 )
 
 Write-Host "`n[Step 1/5] 執行白名單複製 (Whitelist Copy)..." -ForegroundColor Yellow
@@ -122,7 +127,12 @@ $setupExe = Join-Path $distDir $SetupFileName
 $compileArgs = @(
     "/target:winexe",
     "/out:`"$setupExe`"",
-    "/resource:`"$payloadZip`",payload.zip",
+    "/resource:`"$payloadZip`",payload.zip"
+)
+if (Test-Path -LiteralPath $appIco) {
+    $compileArgs += "/win32icon:`"$appIco`""
+}
+$compileArgs += @(
     "/r:System.dll",
     "/r:System.Windows.Forms.dll",
     "/r:System.Drawing.dll",

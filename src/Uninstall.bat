@@ -9,19 +9,19 @@ echo ========================================================
 echo.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& {
-    $dest = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\CodexAccountSwitcher'
-    $store = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAccountSwitcher'
+    $dest = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\CodexAntigravitySwitcher'
+    $store = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexAntigravitySwitcher'
     $desktop = [Environment]::GetFolderPath('Desktop')
     $startMenu = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'
     
     # 移除捷徑
-    $scDesk = Join-Path $desktop 'Codex 帳號切換.lnk'
+    $scDesk = Join-Path $desktop 'Codex 與 Antigravity 帳號切換.lnk'
     if (Test-Path -LiteralPath $scDesk) {
         Remove-Item -LiteralPath $scDesk -Force -ErrorAction SilentlyContinue
         Write-Host '[已移除] 桌面捷徑' -ForegroundColor Yellow
     }
     
-    $scStart = Join-Path $startMenu 'Codex 帳號切換.lnk'
+    $scStart = Join-Path $startMenu 'Codex 與 Antigravity 帳號切換.lnk'
     if (Test-Path -LiteralPath $scStart) {
         Remove-Item -LiteralPath $scStart -Force -ErrorAction SilentlyContinue
         Write-Host '[已移除] 開始功能表捷徑' -ForegroundColor Yellow
@@ -29,7 +29,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& {
     
     # 移除註冊表
     try {
-        $regKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexAccountSwitcher'
+        $regKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexAntigravitySwitcher'
         if (Test-Path $regKey) {
             Remove-Item -Path $regKey -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host '[已移除] 系統應用程式註冊資訊' -ForegroundColor Yellow
