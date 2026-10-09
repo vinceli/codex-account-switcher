@@ -89,11 +89,17 @@
 ## 📖 操作指引
 
 ### 雙風格介面切換 (Classic ⇋ Guild)
+
+![冒險者公會戰情室 - Codex 符文工會模式](preview_guild.png)
+
 - **切換至公會戰情室**：點擊任一分頁右上角青色高亮的「**切換公會戰情室 (Guild)**」按鈕，立即展開沉浸式像素英雄戰情面板。
 - **切換回傳統清單**：在公會戰情室頂部右上角點擊「**切換為傳統清單 (Classic)**」，隨時返回高資訊密度表格。
 - **即時連動**：切換風格不會影響背景的非同步額度查詢排程，兩套介面共享同一資料模型與切換核心。
 
+
 ### Codex 分頁
+
+![傳統清單模式 - Codex 帳號切換](preview_codex.png)
 
 #### 1. 儲存目前第一個帳號
 1. 確認 OpenAI Codex Desktop 已正常登入帳號 A。
@@ -128,6 +134,13 @@
 
 ### Antigravity 分頁
 
+![傳統清單模式 - Antigravity 帳號切換](preview_ag.png)
+
+> [!TIP]
+> **公會戰情室視圖**：亦可於右上角隨時切換為「Antigravity 術士星軌」沉浸式英雄戰情面板：
+>
+> ![冒險者公會戰情室 - Antigravity 模式](preview_guild_ag.png)
+
 1. 在 Antigravity 2.0 桌面版登入後，於此分頁按「儲存目前帳號」。備份存於 `%LOCALAPPDATA%\CodexAntigravitySwitcher\antigravity`，僅原 Windows 使用者可解密。
 2. 點「引導登入新帳號」：工具先備份目前認證，關閉 Antigravity，清除本機登入項目，再啟動官方登入畫面。請在瀏覽器登入另一帳號，返回工具確認後會自動儲存。不要在 Antigravity 按 Sign Out；取消或未偵測到新帳號時，工具會嘗試還原原認證。
 3. 從清單選取帳號後按「切換並重新啟動」。工具會要求先結束執行中任務，關閉桌面版，只替換 `gemini:antigravity` 認證項目並重新啟動。完成後請在 Account 頁確認實際登入；失敗時可按「還原上次切換」。
@@ -141,6 +154,8 @@ Antigravity 分頁的「5 小時用量」與「週用量」欄以 `G` 表示 Gem
 若需在不讀取已安裝版 Codex 帳號的情況下測試 Antigravity，可從原始碼以 `-IsolatedAntigravityTestPath` 指定獨立資料目錄；此模式會停用 Codex 分頁，Antigravity 仍使用目前 Windows 使用者的真實登入項目。
 
 ### 遠端副機 (Web 儀表板) 分頁
+
+![遠端副機控制台](preview_web.png)
 
 1. **啟動 Web 儀表板**：
    - 切換至「**遠端副機 (Web)**」分頁（或在 Codex 分頁點擊「🌐 遠端副機 / Web」快速跳轉）。
