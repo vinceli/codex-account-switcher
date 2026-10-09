@@ -54,6 +54,8 @@ $whitelist = @(
     'CodexAccountSwitcher.ps1',
     'AntigravityCredential.ps1',
     'AntigravityQuota.ps1',
+    'GuildView.ps1',
+    'WebDashboard.ps1',
     'Launcher.cs',
     'Install.bat',
     'Uninstall.bat',
@@ -68,6 +70,13 @@ foreach ($fileName in $whitelist) {
     }
     Copy-Item -LiteralPath $srcFile -Destination (Join-Path $stagingDir $fileName) -Force
     Write-Host "  + 已加入白名單: $fileName" -ForegroundColor Gray
+}
+
+# 加入素材資源目錄
+$assetsSrc = Join-Path $srcDir 'assets'
+if (Test-Path $assetsSrc) {
+    Copy-Item -Path $assetsSrc -Destination $stagingDir -Recurse -Force
+    Write-Host "  + 已加入資源目錄: assets/" -ForegroundColor Gray
 }
 
 # 加入說明檔
@@ -90,7 +99,7 @@ foreach ($pattern in $forbiddenPatterns) {
 }
 Write-Host "  [PASS] 檔名與副檔名黑名單檢查通過 (無 .bin, .log, auth.json 等憑證檔)" -ForegroundColor Green
 
-# 4.2 敏感字串/憑證特徵掃描
+# 4.2 敏感字串/憑證特徵掃描 (僅掃描文字格式檔案)
 $sensitivePatterns = @(
     'Bearer\s+[A-Za-z0-9\-_]{30,}',
     'sess-[A-Za-z0-9]{30,}',
@@ -98,7 +107,11 @@ $sensitivePatterns = @(
     'refresh-[a-zA-Z0-9\-_]{20,}'
 )
 
-foreach ($file in Get-ChildItem -Path $stagingDir -File) {
+$binaryExtensions = @('.png', '.ico', '.exe', '.dll', '.zip')
+foreach ($file in Get-ChildItem -Path $stagingDir -Recurse -File) {
+    if ($binaryExtensions -contains $file.Extension.ToLowerInvariant()) {
+        continue
+    }
     $content = [IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
     foreach ($pat in $sensitivePatterns) {
         if ($content -match $pat) {

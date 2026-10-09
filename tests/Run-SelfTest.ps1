@@ -16,6 +16,10 @@ Write-Host $result
 if ($LASTEXITCODE -eq 0 -and $result -match '^PASS') {
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Quota.Tests.ps1')
     if ($LASTEXITCODE -ne 0) { exit 1 }
+    & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'GuildDialog.Tests.ps1')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'WebDashboard.Tests.ps1')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
     Write-Host "`n[測試通過] 所有加密、識別、快照、還原與工作區保留測試皆符合預期！" -ForegroundColor Green
     exit 0
 } else {

@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex 遠端帳號切換戰情室</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(22, 30, 49, 0.75);
+      --card-border: rgba(56, 189, 248, 0.2);
+      --card-locked-bg: rgba(30, 20, 25, 0.7);
+      --card-locked-border: rgba(239, 68, 68, 0.35);
+      --primary: #38bdf8;
+      --primary-hover: #0ea5e9;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --success: #10b981;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Microsoft JhengHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: radial-gradient(circle at 50% 0%, #172554 0%, var(--bg) 75%);
+      color: var(--text);
+      font-family: var(--font-family);
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1060px;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .header-left h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-left .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-live {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+    .badge-live::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      outline: none;
+      font-family: inherit;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      padding: 8px 14px;
+      font-size: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Target Bar */
+    .target-bar {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px 18px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+    .target-info span {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* Lock Screen (PIN) */
+    #pin-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 13, 22, 0.92);
+      backdrop-filter: blur(12px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    .pin-card {
+      background: #131b2e;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      padding: 36px 32px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+    .pin-card h2 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .pin-card p {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+    .pin-input-group {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .pin-digit {
+      width: 48px;
+      height: 56px;
+      font-size: 24px;
+      font-weight: 700;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      color: var(--primary);
+      outline: none;
+      transition: all 0.2s;
+    }
+    .pin-digit:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: white;
+      padding: 12px;
+      font-size: 15px;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      box-shadow: 0 6px 16px rgba(2, 132, 199, 0.5);
+    }
+    .pin-error {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 20px;
+    }
+
+    /* Accounts Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 20px;
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    /* Locked Card Styling */
+    .card.locked {
+      background: var(--card-locked-bg);
+      border-color: var(--card-locked-border);
+    }
+    .card.locked::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #ef4444, #f59e0b);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .account-name {
+      font-size: 17px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .account-email {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .plan-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .locked-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      margin: 12px 0;
+    }
+
+    .quota-box {
+      margin: 14px 0;
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .quota-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .quota-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .quota-label { color: var(--text-muted); }
+    .quota-val { font-weight: 600; }
+    .progress-track {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+
+    .card-footer {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .saved-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .btn-switch {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      color: white;
+      padding: 8px 14px;
+      font-size: 13px;
+      box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+    }
+    .btn-switch:hover {
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.5);
+    }
+    .btn-switch:disabled {
+      background: rgba(255, 255, 255, 0.08);
+      color: #64748b;
+      cursor: not-allowed;
+      box-shadow: none;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 14px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 2000;
+      max-width: 400px;
+      font-size: 14px;
+    }
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    #toast.success { border-color: rgba(16, 185, 129, 0.5); border-left: 4px solid var(--success); }
+    #toast.error { border-color: rgba(239, 68, 68, 0.5); border-left: 4px solid var(--danger); }
+  </style>
+</head>
+<body>
+
+  <!-- PIN 驗證對話框 -->
+  <div id="pin-overlay">
+    <div class="pin-card">
+      <div style="font-size: 40px; margin-bottom: 12px;">🛡️</div>
+      <h2>請輸入 6 碼動態驗證碼</h2>
+      <p>驗證碼顯示於主機 (192.168.1.168) 切換工具畫面上</p>
+      <div class="pin-input-group">
+        <input type="password" maxlength="1" class="pin-digit" autofocus>
+        <input type="password" maxlength="1" class="pin-digit">
+        <input type="password" maxlength="1" class="pin-digit">
+        <input type="password" maxlength="1" class="pin-digit">
+        <input type="password" maxlength="1" class="pin-digit">
+        <input type="password" maxlength="1" class="pin-digit">
+      </div>
+      <button class="btn-primary" id="btn-submit-pin">解鎖連線</button>
+      <div class="pin-error" id="pin-error-msg"></div>
+    </div>
+  </div>
+
+  <div class="container">
+    <header>
+      <div class="header-left">
+        <h1>⚡ Codex 遠端帳號切換戰情室</h1>
+        <div class="subtitle" id="host-subinfo">主機：192.168.1.168 | 安全 SSH 憑證通道</div>
+      </div>
+      <div class="header-actions">
+        <span class="badge badge-live">服務運行中</span>
+        <button class="btn-secondary" id="btn-refresh">🔄 重新整理</button>
+        <button class="btn-secondary" id="btn-logout">🔒 登出</button>
+      </div>
+    </header>
+
+    <!-- 目標副機資訊列 -->
+    <div class="target-bar">
+      <div class="target-info">
+        目標副機：<span id="target-host-display">CentOS 8 (192.168.1.195)</span> 
+        &nbsp;|&nbsp; 
+        身分：<span id="target-user-display">vince</span> 
+        &nbsp;|&nbsp; 
+        目標路徑：<code>~/.codex/auth.json</code>
+      </div>
+      <div style="color: var(--text-muted); font-size: 12px;">
+        已啟用防衝突安全保護
+      </div>
+    </div>
+
+    <!-- 帳號清單格線 -->
+    <div class="grid" id="accounts-grid">
+      <!-- 動態載入卡片 -->
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    let authToken = localStorage.getItem('codex_web_token') || '';
+    let systemStatus = {};
+
+    const digits = document.querySelectorAll('.pin-digit');
+    digits.forEach((digit, index) => {
+      digit.addEventListener('input', (e) => {
+        if (e.target.value.length === 1 && index < digits.length - 1) {
+          digits[index + 1].focus();
+        }
+      });
+      digit.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !e.target.value && index > 0) {
+          digits[index - 1].focus();
+        }
+        if (e.key === 'Enter') {
+          handlePinSubmit();
+        }
+      });
+    });
+
+    document.getElementById('btn-submit-pin').addEventListener('click', handlePinSubmit);
+    document.getElementById('btn-refresh').addEventListener('click', loadAccounts);
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      authToken = '';
+      localStorage.removeItem('codex_web_token');
+      showPinOverlay();
+    });
+
+    function showPinOverlay() {
+      document.getElementById('pin-overlay').style.display = 'flex';
+      digits.forEach(d => d.value = '');
+      digits[0].focus();
+    }
+
+    function hidePinOverlay() {
+      document.getElementById('pin-overlay').style.display = 'none';
+    }
+
+    function showToast(msg, type = 'info') {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'show ' + type;
+      setTimeout(() => { toast.className = ''; }, 4000);
+    }
+
+    async function handlePinSubmit() {
+      const pin = Array.from(digits).map(d => d.value).join('');
+      if (pin.length !== 6) {
+        document.getElementById('pin-error-msg').textContent = '請輸入完整 6 碼驗證碼。';
+        return;
+      }
+      document.getElementById('pin-error-msg').textContent = '驗證中…';
+
+      try {
+        const res = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pin })
+        });
+        const data = await res.json();
+        if (data.success) {
+          authToken = data.token;
+          localStorage.setItem('codex_web_token', authToken);
+          hidePinOverlay();
+          loadStatus();
+          loadAccounts();
+        } else {
+          document.getElementById('pin-error-msg').textContent = data.error || '驗證碼錯誤，請確認主機畫面。';
+        }
+      } catch (err) {
+        document.getElementById('pin-error-msg').textContent = '無法連線至主機伺服器。';
+      }
+    }
+
+    async function loadStatus() {
+      try {
+        const res = await fetch('/api/status', {
+          headers: { 'X-Session-Token': authToken }
+        });
+        if (res.status === 401) {
+          showPinOverlay();
+          return;
+        }
+        systemStatus = await res.json();
+        if (systemStatus.remote_host) {
+          document.getElementById('target-host-display').textContent = `CentOS 8 (${systemStatus.remote_host})`;
+        }
+        if (systemStatus.remote_user) {
+          document.getElementById('target-user-display').textContent = systemStatus.remote_user;
+        }
+      } catch (e) { }
+    }
+
+    function getQuotaColor(remaining) {
+      if (remaining === null || remaining === undefined || remaining < 0) return '#64748b';
+      if (remaining === 0) return '#ef4444';
+      if (remaining < 30) return '#f59e0b';
+      if (remaining < 70) return '#10b981';
+      return '#38bdf8';
+    }
+
+    async function loadAccounts() {
+      if (!authToken) { showPinOverlay(); return; }
+      try {
+        const res = await fetch('/api/accounts', {
+          headers: { 'X-Session-Token': authToken }
+        });
+        if (res.status === 401) {
+          showPinOverlay();
+          return;
+        }
+        const accounts = await res.json();
+        renderAccounts(accounts);
+      } catch (err) {
+        showToast('讀取帳號清單失敗：' + err.message, 'error');
+      }
+    }
+
+    function renderAccounts(accounts) {
+      const grid = document.getElementById('accounts-grid');
+      grid.innerHTML = '';
+
+      if (!accounts || accounts.length === 0) {
+        grid.innerHTML = '<div style="color: var(--text-muted); grid-column: 1/-1; text-align: center; padding: 40px;">目前尚無已備份的 Codex 帳號。</div>';
+        return;
+      }
+
+      accounts.forEach(acc => {
+        const card = document.createElement('div');
+        const isLocked = acc.locked === true;
+        card.className = 'card' + (isLocked ? ' locked' : '');
+
+        const primaryRemaining = (acc.primary_remaining !== null && acc.primary_remaining >= 0) ? acc.primary_remaining : 0;
+        const secondaryRemaining = (acc.secondary_remaining !== null && acc.secondary_remaining >= 0) ? acc.secondary_remaining : 0;
+        const pColor = getQuotaColor(acc.primary_remaining);
+        const sColor = getQuotaColor(acc.secondary_remaining);
+
+        card.innerHTML = `
+          <div>
+            <div class="card-header">
+              <div>
+                <div class="account-name">${acc.name || '未具名帳號'}</div>
+                <div class="account-email">${acc.email || '—'}</div>
+              </div>
+              <span class="plan-badge">${acc.plan || '—'}</span>
+            </div>
+
+            ${isLocked ? `
+              <div class="locked-badge">
+                🔒 <strong>主機使用中</strong>（鎖定保護，禁止副機切換）
+              </div>
+            ` : ''}
+
+            <div class="quota-box">
+              <div class="quota-item">
+                <div class="quota-meta">
+                  <span class="quota-label">5 小時額度</span>
+                  <span class="quota-val" style="color: ${pColor}">${acc.primary || '未知'}</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" style="width: ${primaryRemaining}%; background: ${pColor};"></div>
+                </div>
+              </div>
+              <div class="quota-item">
+                <div class="quota-meta">
+                  <span class="quota-label">每週額度</span>
+                  <span class="quota-val" style="color: ${sColor}">${acc.secondary || '未知'}</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" style="width: ${secondaryRemaining}%; background: ${sColor};"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-footer">
+            <div class="saved-time">備份：${acc.saved || '—'}</div>
+            <button class="btn-switch" ${isLocked ? 'disabled' : ''} onclick="switchAccount('${acc.key}', '${acc.name}')">
+              ${isLocked ? '已在主機執勤' : '🚀 切換至 CentOS 副機'}
+            </button>
+          </div>
+        `;
+
+        grid.appendChild(card);
+      });
+    }
+
+    async function switchAccount(key, name) {
+      if (!confirm(`確定要將帳號「${name}」部署至 CentOS 副機 (192.168.1.195) 嗎？\n\n主機將透過安全 SSH 通道替換 ~/.codex/auth.json 憑證，並自動重新啟動副機的 Codex Desktop。`)) {
+        return;
+      }
+
+      showToast(`正在推送「${name}」至 CentOS 副機…`, 'info');
+
+      try {
+        const res = await fetch('/api/switch-remote', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Token': authToken
+          },
+          body: JSON.stringify({
+            target_key: key,
+            remote_host: systemStatus.remote_host || '192.168.1.195',
+            remote_user: systemStatus.remote_user || 'vince'
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast(`✅ 成功切換！${data.message || '已成功部署至副機'}`, 'success');
+          loadAccounts();
+        } else {
+          showToast(`❌ 切換失敗：${data.error || '拒絕切換'}`, 'error');
+        }
+      } catch (err) {
+        showToast('❌ 連線或傳輸異常：' + err.message, 'error');
+      }
+    }
+
+    // 初始化檢查
+    if (authToken) {
+      hidePinOverlay();
+      loadStatus();
+      loadAccounts();
+    } else {
+      showPinOverlay();
+    }
+  </script>
+</body>
+</html>

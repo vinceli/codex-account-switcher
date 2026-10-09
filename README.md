@@ -18,11 +18,26 @@
 4. **安全隔離檢查閘門（Zero-Credential Security Gate）**：
    - 建置腳本採白名單與憑證特徵掃描；提交前仍需檢查差異，掃描不能保證辨識所有秘密格式。
 5. **多種安裝與部署模式**：
-   - 提供單一自包含 GUI 安裝程式（`Setup-CodexAntigravitySwitcher-1.2.0.exe`，免 Admin/UAC 權限）。
+   - 提供單一自包含 GUI 安裝程式（`Setup-CodexAntigravitySwitcher.exe`，免 Admin/UAC 權限）。
    - 提供綠色免安裝發行包（`Portable.zip`，內建一鍵捷徑建立與標準解除安裝腳本）。
 6. **非同步額度查詢**：
    - Codex 分頁顯示每個已儲存帳號的方案、實際窗口週期、剩餘比例及重置倒數；連線失敗不妨礙本機切換。
    - Antigravity 分頁顯示每個已儲存帳號的 Gemini、Claude/GPT 五小時及每週剩餘比例與方案；過期的存取權杖只在記憶體中刷新，不改寫登入項目或備份。
+7. **雙風格介面：傳統清單 vs 冒險者公會戰情室 (Guild Cockpit View)**：
+   - **傳統清單模式**：高資訊密度、經典 Windows 表格、支援右鍵選單快速切換與管理。
+   - **公會戰情室模式**：視覺化桌面儀表板，將各帳號具象化為英雄幹員（Codex 符文騎士、Antigravity 星軌工匠等），具備精力充沛/疲憊/竭盡等動態像素立繪。
+   - **先鋒主將卡片**：醒目展示當前執勤帳號、五小時與週用量雙能量條、即時狀態與重置倒數。
+   - **後備名冊卡片流**：水平卡片列出所有後備帳號，點擊任一後備卡片即可立即無縫切換執勤。
+   - **智慧輪替控制**：
+     - 提供開關核取方塊（可隨時啟用或關閉自動建議）。
+     - 單帳號保護：當該來源帳號數 $\le 1$ 時，自動隱藏輪替操作項。
+     - 嚴格來源隔離：Codex 僅在 Codex 帳號池間切換；Antigravity 僅在 Antigravity 帳號池間切換，嚴禁跨來源互換。
+
+8. **遠端 Web 儀表板與副機 (CentOS 8) 安全切換**：
+   - **可選啟動 Web 服務**：主機啟動後可自由選擇開啟 Web 伺服器，自訂監聽 Port（預設 8998），並自動生成隨機 6 碼動態 PIN 碼。
+   - **現代暗色戰情 Web UI**：同區網內任何瀏覽器（或副機桌面）均可開啟 Web 頁面，輸入 6 碼 PIN 解鎖遠端儀表板。
+   - **防衝突安全鎖定 (Collision Lock)**：即時識別主機使用中帳號，Web 介面標記為「主機使用中 (鎖定)」並禁用切換；API 端強制攔截，嚴防主副機搶佔同一個 Refresh Token 造成 401 撤銷。
+   - **OpenSSH 安全通道派送**：副機端（CentOS 8: 192.168.1.195）零安裝、免常駐服務；主機經由 SSH/SCP 將目標憑證原子覆蓋至副機 `~/.codex/auth.json` 並設為 `chmod 600`。
 
 ---
 
@@ -39,6 +54,11 @@
 │   ├── CodexAccountSwitcher.ps1 # 主介面與帳號切換核心邏輯
 │   ├── AntigravityCredential.ps1 # Antigravity 認證管理員讀寫與備份
 │   ├── AntigravityQuota.ps1     # Antigravity 額度查詢與解析
+│   ├── GuildView.ps1            # 冒險者公會戰情室風格介面模組
+│   ├── WebDashboard.ps1         # 遠端 Web 儀表板與副機安全派送模組
+│   ├── assets/                  # 視覺化資產
+│   │   ├── guild/               # 像素英雄角色立繪（透明通道 PNG）
+│   │   └── web/                 # 遠端 Web 儀表板自包含單頁應用 (index.html)
 │   ├── Launcher.cs              # 靜默無命令提示字元視窗之 C# 啟動器
 │   ├── Installer.cs             # 自包含 GUI 安裝精靈原始碼
 │   ├── Install.bat              # 免安裝版一鍵安裝捷徑腳本
@@ -56,17 +76,22 @@
 ## 🚀 快速開始
 
 ### 方式一：使用 GUI 安裝程式（推薦）
-1. 執行發行包中的 `Setup-CodexAntigravitySwitcher-1.2.0.exe`。
+1. 執行發行包中的 `Setup-CodexAntigravitySwitcher.exe`。
 2. 新版預設安裝至 `%LOCALAPPDATA%\Programs\CodexAntigravitySwitcher`（不需系統管理員權限），不覆寫既有 `CodexAccountSwitcher` 安裝。
 3. 安裝完成後將自動在**桌面**與**開始功能表**建立「Codex 與 Antigravity 帳號切換」捷徑。
 
 ### 方式二：綠色免安裝版
-1. 解壓縮 `CodexAccountSwitcher-v1.2.0-Portable.zip` 至任意資料夾。
+1. 解壓縮 `CodexAccountSwitcher-v1.1.0-Portable.zip` 至任意資料夾。
 2. 點擊 `Install.bat` 即可一鍵建立桌面捷徑；亦可直接點擊 `CodexAccountSwitcher.exe` 立即啟動。
 
 ---
 
 ## 📖 操作指引
+
+### 雙風格介面切換 (Classic ⇋ Guild)
+- **切換至公會戰情室**：點擊任一分頁右上角青色高亮的「**切換公會戰情室 (Guild)**」按鈕，立即展開沉浸式像素英雄戰情面板。
+- **切換回傳統清單**：在公會戰情室頂部右上角點擊「**切換為傳統清單 (Classic)**」，隨時返回高資訊密度表格。
+- **即時連動**：切換風格不會影響背景的非同步額度查詢排程，兩套介面共享同一資料模型與切換核心。
 
 ### Codex 分頁
 
@@ -84,6 +109,7 @@
 #### 3. 日常切換
 1. 在清單中點選目標帳號。
 2. 點擊「**切換並重新啟動**」，工具會自動關閉既有 Desktop、保存最新 Token、置換憑證並重啟應用。
+3. **智慧啟動偵測**：若 Codex 桌面版尚未啟動，點擊此按鈕將直接以所選帳號權限啟動 Codex，不卡控是否為同一帳號，亦不跳出中斷任務警告。
 
 #### 4. 額度與重置時間
 
@@ -113,6 +139,21 @@ Antigravity 分頁的「5 小時用量」與「週用量」欄以 `G` 表示 Gem
 新版首次啟動會驗證 `%LOCALAPPDATA%\CodexAccountSwitcher` 的舊版 Codex 加密備份，將尚未存在的帳號複製到 `%LOCALAPPDATA%\CodexAntigravitySwitcher`。舊版原件保留；若新版已有同一帳號的備份，不覆寫新版資料。桌面與開始功能表捷徑使用舊版相同的金鑰圖示。
 
 若需在不讀取已安裝版 Codex 帳號的情況下測試 Antigravity，可從原始碼以 `-IsolatedAntigravityTestPath` 指定獨立資料目錄；此模式會停用 Codex 分頁，Antigravity 仍使用目前 Windows 使用者的真實登入項目。
+
+### 遠端副機 (Web 儀表板) 分頁
+
+1. **啟動 Web 儀表板**：
+   - 切換至「**遠端副機 (Web)**」分頁（或在 Codex 分頁點擊「🌐 遠端副機 / Web」快速跳轉）。
+   - 設定監聽 Port（預設 `8998`），點擊「**▶ 啟動 Web 儀表板**」。
+   - 工具會自動生成一組 6 碼隨機動態驗證碼（例如 `839201`），並顯示服務網址（例如 `http://192.168.1.168:8998`）。
+2. **副機 SSH 連線設定**：
+   - 預設目標副機為 `192.168.1.195`、SSH 帳號 `vince`、連接埠 `22`、目標路徑 `~/.codex/auth.json`。
+   - 點擊「**⚡ 測試副機 SSH 連線**」可即時驗證免密碼金鑰通道是否就緒。
+3. **遠端瀏覽器切換操作**：
+   - 在 CentOS 8 或同網段任意裝置的瀏覽器開啟 `http://192.168.1.168:8998`。
+   - 輸入主機顯示的 6 碼 PIN 解鎖戰情儀表板。
+   - **防衝突保護**：正在主機執勤中的帳號會自動顯示 `🔒 主機使用中（鎖定保護）`，切換按鈕強制反灰禁止點擊。
+   - 點選其他任一後備帳號的「🚀 切換至 CentOS 副機」，主機即刻經由 SSH 安全通道將解密後之 `auth.json` 推送至副機並原子覆蓋。
 
 ---
 

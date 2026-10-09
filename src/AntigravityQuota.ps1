@@ -211,6 +211,7 @@ function Start-AGQuotaQuery([byte[]]$Bytes, [string]$Key) {
 
 function Update-AGQuotaResults {
     if ($form.IsDisposed -or $form.Disposing) { Stop-AGQuotaQueries; return }
+    $hasUpdates = $false
     foreach ($job in @($script:AGQuotaJobs)) {
         if (!$job.Task.IsCompleted) { continue }
         try {
@@ -225,8 +226,10 @@ function Update-AGQuotaResults {
             $item.SubItems[4].ForeColor = Get-QuotaColor $quota.WeeklyRemaining
             $item.SubItems[6].Text = $quota.Status
             $item.ToolTipText = $quota.Detail
+            $hasUpdates = $true
         } catch {
             if ($agList.Items.ContainsKey($job.Key)) { $agList.Items[$job.Key].SubItems[6].Text = '查詢失敗' }
+            $hasUpdates = $true
         } finally {
             $job.Cancellation.Dispose()
             $script:AGQuotaJobs = @($script:AGQuotaJobs | Where-Object { $_ -ne $job })
@@ -236,6 +239,7 @@ function Update-AGQuotaResults {
         $agLastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss')
         $script:AGQuotaQueryStarted = $false
     }
+    if ($hasUpdates -and (Get-Command 'Update-GuildView' -ErrorAction SilentlyContinue)) { Update-GuildView }
 }
 
 function Invoke-AGQuotaSelfTest {

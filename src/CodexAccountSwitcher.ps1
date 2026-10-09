@@ -1,4 +1,4 @@
-﻿param([switch]$SelfTest, [string]$PreviewPath, [string]$PreviewAntigravityPath, [switch]$CheckEnvironment, [string]$IsolatedAntigravityTestPath)
+﻿param([switch]$SelfTest, [string]$PreviewPath, [string]$PreviewAntigravityPath, [string]$PreviewGuildPath, [string]$PreviewGuildAGPath, [string]$PreviewWebPath, [switch]$CheckEnvironment, [string]$IsolatedAntigravityTestPath)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -150,6 +150,8 @@ $script:Utf8 = New-Object Text.UTF8Encoding($true)
 $script:LogPath = Join-Path $script:StorePath 'switcher.log'
 . (Join-Path $PSScriptRoot 'AntigravityCredential.ps1')
 . (Join-Path $PSScriptRoot 'AntigravityQuota.ps1')
+. (Join-Path $PSScriptRoot 'WebDashboard.ps1')
+. (Join-Path $PSScriptRoot 'GuildView.ps1')
 
 function Write-SwitcherLog([string]$Level, [string]$Message, [string]$Detail = '') {
     try {
@@ -698,6 +700,7 @@ function Start-QuotaQuery([byte[]]$Bytes, [string]$Key) {
 
 function Update-QuotaResults {
     if ($form.IsDisposed -or $form.Disposing) { Stop-QuotaQueries; return }
+    $changed = $false
     foreach ($job in @($script:QuotaJobs)) {
         if (!$job.Task.IsCompleted) { continue }
         try {
@@ -712,14 +715,16 @@ function Update-QuotaResults {
             $item.SubItems[4].ForeColor = Get-QuotaColor $quota.SecondaryRemaining
             $item.SubItems[6].Text = $quota.Status
             $item.ToolTipText = $quota.Detail
+            $changed = $true
         } finally {
             $job.Cancellation.Dispose()
             $script:QuotaJobs = @($script:QuotaJobs | Where-Object { $_ -ne $job })
         }
     }
-    if ($script:QuotaQueryStarted -and !$script:QuotaJobs.Count) {
+    if ($changed -or ($script:QuotaQueryStarted -and !$script:QuotaJobs.Count)) {
         if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss') }
-        $script:QuotaQueryStarted = $false
+        if (!$script:QuotaJobs.Count) { $script:QuotaQueryStarted = $false }
+        Sync-WebDashboardAccounts
     }
 }
 
@@ -846,7 +851,8 @@ $mutexName = if ($IsolatedAntigravityTestPath) { 'Local\CodexAccountSwitcher-AG-
 $mutex = New-Object Threading.Mutex($false, $mutexName)
 $acquired = $false
 try { $acquired = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $acquired = $true }
-if (!$acquired -and !$PreviewPath) { [Windows.Forms.MessageBox]::Show('帳號切換工具已開啟。') | Out-Null; $mutex.Dispose(); exit }
+$isPreviewMode = [bool]($PreviewPath -or $PreviewAntigravityPath -or $PreviewGuildPath -or $PreviewGuildAGPath -or $PreviewWebPath)
+if (!$acquired -and !$isPreviewMode) { [Windows.Forms.MessageBox]::Show('帳號切換工具已開啟。') | Out-Null; $mutex.Dispose(); exit }
 
 $form = New-Object Windows.Forms.Form
 $appIcon = Get-ApplicationIcon
@@ -886,6 +892,9 @@ $agTab = New-Object Windows.Forms.TabPage
 $agTab.Text = 'Antigravity'
 [void]$tabs.TabPages.Add($codexTab)
 [void]$tabs.TabPages.Add($agTab)
+$webTab = New-Object Windows.Forms.TabPage
+$webTab.Text = '遠端副機 (Web)'
+[void]$tabs.TabPages.Add($webTab)
 $form.Controls.Add($tabs)
 if ($IsolatedAntigravityTestPath) { $form.Text += '（Antigravity 獨立測試）'; $tabs.SelectedTab = $agTab }
 $script:CurrentPage = $codexTab
@@ -959,6 +968,83 @@ function Refresh-Accounts {
     Write-SwitcherLog 'DEBUG' '刷新清單完成' "CurrentKey=$currentKey, Backups=$($list.Items.Count), Corrupted=$bad"
     if (!$script:QuotaJobs.Count -and $null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：無可查詢帳號' }
     if ($bad) { Set-Status "有 $bad 個備份無法解密，未列入清單；原檔已保留。" }
+    Sync-WebDashboardAccounts
+}
+
+function Sync-WebDashboardAccounts {
+    $currentKey = ''
+    $currentEmail = ''
+    try {
+        $curr = Read-Current
+        $currentKey = $curr.Identity.Key
+        $currentEmail = $curr.Identity.Email
+    } catch { }
+    $script:CurrentCodexKey = $currentKey
+
+    if ($script:webHostLockLabel) {
+        $displayEmail = if ($currentEmail) { $currentEmail } else { '未登入或未知' }
+        $script:webHostLockLabel.Text = "[鎖定保護] 目前主機執勤帳號：$displayEmail （已鎖定禁止副機切換）"
+    }
+
+    if (!$script:WebDashboardInstance -or !$script:WebDashboardInstance.IsRunning) { return }
+
+    $accounts = @()
+    if ($list -and $list.Items.Count -gt 0) {
+        foreach ($item in $list.Items) {
+            try {
+                $p1Text = [string]$item.SubItems[3].Text
+                $p2Text = [string]$item.SubItems[4].Text
+                $p1Val = -1
+                $p2Val = -1
+                if ($p1Text -match '([0-9]+(?:\.[0-9]+)?)%') { $p1Val = [double]$matches[1] }
+                if ($p2Text -match '([0-9]+(?:\.[0-9]+)?)%') { $p2Val = [double]$matches[1] }
+
+                $credBytes = $null
+                $tagStr = [string]$item.Tag
+                if ($tagStr -and (Test-Path -LiteralPath $tagStr)) {
+                    $rec = Read-Backup $tagStr
+                    $credBytes = $rec.Bytes
+                }
+
+                $savedText = if ($item.SubItems.Count -gt 7) { [string]$item.SubItems[7].Text } else { '—' }
+
+                $accounts += [pscustomobject]@{
+                    Key = [string]$item.Name
+                    Name = [string]$item.Text
+                    Email = [string]$item.SubItems[1].Text
+                    Plan = [string]$item.SubItems[2].Text
+                    Primary = $p1Text
+                    Secondary = $p2Text
+                    PrimaryRemaining = $p1Val
+                    SecondaryRemaining = $p2Val
+                    Saved = $savedText
+                    Bytes = $credBytes
+                }
+            } catch { }
+        }
+    } else {
+        foreach ($file in @(Get-ChildItem -LiteralPath $script:StorePath -Filter '*.bin' -ErrorAction SilentlyContinue)) {
+            try {
+                $rec = Read-Backup $file.FullName
+                $accounts += [pscustomobject]@{
+                    Key = $rec.Key
+                    Name = $rec.Name
+                    Email = $rec.Email
+                    Plan = '—'
+                    Primary = '未知'
+                    Secondary = '未知'
+                    PrimaryRemaining = -1
+                    SecondaryRemaining = -1
+                    Saved = $rec.Saved
+                    Bytes = $rec.Bytes
+                }
+            } catch { }
+        }
+    }
+
+    $remoteH = if ($script:webRemoteHostBox) { $script:webRemoteHostBox.Text.Trim() } else { '192.168.1.195' }
+    $remoteU = if ($script:webRemoteUserBox) { $script:webRemoteUserBox.Text.Trim() } else { 'vince' }
+    Update-WebDashboardState -HostActiveKey $currentKey -RemoteHost $remoteH -RemoteUser $remoteU -AccountsList $accounts
 }
 
 function Refresh-AGAccounts {
@@ -1102,7 +1188,247 @@ if ($IsolatedAntigravityTestPath) {
 $quotaTimer = New-Object Windows.Forms.Timer
 $quotaTimer.Interval = 200
 $quotaTimer.Add_Tick({ Update-QuotaResults; Update-AGQuotaResults })
-$form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries; Stop-AGQuotaQueries })
+function Initialize-WebDashboardTab {
+    $script:CurrentPage = $webTab
+
+    $webTitle = New-Label 'Codex 遠端 Web 儀表板與副機切換' 24 16 520 34
+    $webTitle.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 16, [Drawing.FontStyle]::Bold)
+
+    $script:webStatusBadge = New-Label '狀態：[未啟動]' 560 22 530 26
+    $script:webStatusBadge.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 10.5, [Drawing.FontStyle]::Bold)
+    $script:webStatusBadge.ForeColor = [Drawing.Color]::DimGray
+    $script:webStatusBadge.TextAlign = 'TopRight'
+
+    # === 群組 1: Web 伺服器控制 (左半部) ===
+    $grpServer = New-Object Windows.Forms.GroupBox
+    $grpServer.Text = 'Web 儀表板服務'
+    $grpServer.SetBounds(24, 55, 520, 275)
+    $grpServer.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9.5)
+    $webTab.Controls.Add($grpServer)
+
+    $lblPort = New-Object Windows.Forms.Label
+    $lblPort.Text = '監聽 Port：'
+    $lblPort.SetBounds(20, 32, 100, 24)
+    $grpServer.Controls.Add($lblPort)
+
+    $script:webPortBox = New-Object Windows.Forms.TextBox
+    $script:webPortBox.Text = '8998'
+    $script:webPortBox.SetBounds(130, 29, 90, 26)
+    $grpServer.Controls.Add($script:webPortBox)
+
+    $lblPin = New-Object Windows.Forms.Label
+    $lblPin.Text = '動態驗證碼：'
+    $lblPin.SetBounds(20, 72, 100, 24)
+    $grpServer.Controls.Add($lblPin)
+
+    $script:webPinDisplay = New-Object Windows.Forms.Label
+    $script:webPinDisplay.Text = '未啟動'
+    $script:webPinDisplay.SetBounds(130, 69, 120, 26)
+    $script:webPinDisplay.Font = New-Object Drawing.Font('Consolas', 12, [Drawing.FontStyle]::Bold)
+    $script:webPinDisplay.ForeColor = [Drawing.Color]::DarkSlateBlue
+    $grpServer.Controls.Add($script:webPinDisplay)
+
+    $btnRefreshPin = New-Object Windows.Forms.Button
+    $btnRefreshPin.Text = '產生新 PIN'
+    $btnRefreshPin.SetBounds(260, 66, 130, 32)
+    $btnRefreshPin.Add_Click({
+        if ($script:WebDashboardInstance -and $script:WebDashboardInstance.IsRunning) {
+            $newPin = $script:WebDashboardInstance.GenerateNewPin()
+            $script:webPinDisplay.Text = $newPin
+            Write-SwitcherLog 'INFO' '已手動更換 Web 儀表板驗證碼' "新 PIN=$newPin"
+        }
+    })
+    $grpServer.Controls.Add($btnRefreshPin)
+
+    $script:webUrlLabel = New-Object Windows.Forms.Label
+    $script:webUrlLabel.Text = '連線網址：尚未啟動'
+    $script:webUrlLabel.SetBounds(20, 112, 480, 24)
+    $script:webUrlLabel.ForeColor = [Drawing.Color]::FromArgb(30, 90, 160)
+    $script:webUrlLabel.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9, [Drawing.FontStyle]::Bold)
+    $grpServer.Controls.Add($script:webUrlLabel)
+
+    $script:webStartBtn = New-Object Windows.Forms.Button
+    $script:webStartBtn.Text = '▶ 啟動服務'
+    $script:webStartBtn.SetBounds(20, 150, 150, 36)
+    $script:webStartBtn.BackColor = [Drawing.Color]::FromArgb(235, 245, 235)
+    $script:webStartBtn.Add_Click({
+        $port = 8998
+        [int]::TryParse($script:webPortBox.Text, [ref]$port) | Out-Null
+        $script:WebDashboardInstance = Start-WebDashboard -Port $port -StorePath $script:StorePath -GetAuthJsonCallback {
+            $curr = Read-Current
+            return [System.IO.File]::ReadAllText($script:AuthPath, [System.Text.Encoding]::UTF8)
+        } -GetActiveKeyCallback {
+            try { return (Read-Current).Identity.Key } catch { return '' }
+        }
+
+        if ($script:WebDashboardInstance.IsRunning) {
+            $localIp = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi*', '以太網*', 'Ethernet*' -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+                Select-Object -First 1).IPAddress
+            if (!$localIp) { $localIp = 'localhost' }
+            $script:webUrlLabel.Text = "連線網址：http://$localIp`:$($script:WebDashboardInstance.Port)/"
+            $script:webPinDisplay.Text = $script:WebDashboardInstance.Pin
+            $script:webStatusBadge.Text = "狀態：運行中 (Port $($script:WebDashboardInstance.Port))"
+            $script:webStatusBadge.ForeColor = [Drawing.Color]::ForestGreen
+            $script:webStartBtn.Enabled = $false
+            $script:webStopBtn.Enabled = $true
+            $script:webOpenBrowserBtn.Enabled = $true
+            $script:webPortBox.Enabled = $false
+            Sync-WebDashboardAccounts
+            Write-SwitcherLog 'INFO' 'Web 儀表板已啟動' "Port=$($script:WebDashboardInstance.Port) PIN=$($script:WebDashboardInstance.Pin)"
+        } else {
+            [Windows.Forms.MessageBox]::Show('無法啟動 Web 服務，可能 Port 已被佔用。', '啟動失敗', 'OK', 'Error') | Out-Null
+        }
+    })
+    $grpServer.Controls.Add($script:webStartBtn)
+
+    $script:webStopBtn = New-Object Windows.Forms.Button
+    $script:webStopBtn.Text = '■ 停止服務'
+    $script:webStopBtn.SetBounds(180, 150, 110, 36)
+    $script:webStopBtn.Enabled = $false
+    $script:webStopBtn.Add_Click({
+        Stop-WebDashboard
+        $script:webStatusBadge.Text = "狀態：[已停止]"
+        $script:webStatusBadge.ForeColor = [Drawing.Color]::DimGray
+        $script:webUrlLabel.Text = "連線網址：尚未啟動"
+        $script:webPinDisplay.Text = "未啟動"
+        $script:webStartBtn.Enabled = $true
+        $script:webStopBtn.Enabled = $false
+        $script:webOpenBrowserBtn.Enabled = $false
+        $script:webPortBox.Enabled = $true
+        Write-SwitcherLog 'INFO' 'Web 儀表板已停止'
+    })
+    $grpServer.Controls.Add($script:webStopBtn)
+
+    $script:webOpenBrowserBtn = New-Object Windows.Forms.Button
+    $script:webOpenBrowserBtn.Text = '在瀏覽器開啟'
+    $script:webOpenBrowserBtn.SetBounds(300, 150, 140, 36)
+    $script:webOpenBrowserBtn.Enabled = $false
+    $script:webOpenBrowserBtn.Add_Click({
+        if ($script:WebDashboardInstance -and $script:WebDashboardInstance.IsRunning) {
+            Start-Process "http://localhost:$($script:WebDashboardInstance.Port)/"
+        }
+    })
+    $grpServer.Controls.Add($script:webOpenBrowserBtn)
+
+    $lblServerHint = New-Object Windows.Forms.Label
+    $lblServerHint.Text = '提示：在副機 (CentOS 8) 終端機或同網段瀏覽器打開上方網址，輸入 6 碼 PIN 即可進行切換。'
+    $lblServerHint.SetBounds(20, 205, 480, 56)
+    $lblServerHint.ForeColor = [Drawing.Color]::DimGray
+    $lblServerHint.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
+    $grpServer.Controls.Add($lblServerHint)
+
+    # === 群組 2: CentOS 8 副機連線設定 (右半部) ===
+    $grpRemote = New-Object Windows.Forms.GroupBox
+    $grpRemote.Text = 'CentOS 8 副機目標設定 (SSH 通道)'
+    $grpRemote.SetBounds(560, 55, 530, 275)
+    $grpRemote.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9.5)
+    $webTab.Controls.Add($grpRemote)
+
+    $lblHost = New-Object Windows.Forms.Label
+    $lblHost.Text = '副機 IP：'
+    $lblHost.SetBounds(20, 32, 100, 24)
+    $grpRemote.Controls.Add($lblHost)
+
+    $script:webRemoteHostBox = New-Object Windows.Forms.TextBox
+    $script:webRemoteHostBox.Text = '192.168.1.195'
+    $script:webRemoteHostBox.SetBounds(130, 29, 220, 26)
+    $grpRemote.Controls.Add($script:webRemoteHostBox)
+
+    $lblUser = New-Object Windows.Forms.Label
+    $lblUser.Text = 'SSH 帳號：'
+    $lblUser.SetBounds(20, 72, 100, 24)
+    $grpRemote.Controls.Add($lblUser)
+
+    $script:webRemoteUserBox = New-Object Windows.Forms.TextBox
+    $script:webRemoteUserBox.Text = 'vince'
+    $script:webRemoteUserBox.SetBounds(130, 69, 130, 26)
+    $grpRemote.Controls.Add($script:webRemoteUserBox)
+
+    $lblSshPort = New-Object Windows.Forms.Label
+    $lblSshPort.Text = 'Port：'
+    $lblSshPort.SetBounds(275, 72, 50, 24)
+    $grpRemote.Controls.Add($lblSshPort)
+
+    $script:webRemotePortBox = New-Object Windows.Forms.TextBox
+    $script:webRemotePortBox.Text = '22'
+    $script:webRemotePortBox.SetBounds(325, 69, 60, 26)
+    $grpRemote.Controls.Add($script:webRemotePortBox)
+
+    $lblRemotePath = New-Object Windows.Forms.Label
+    $lblRemotePath.Text = '遠端目標檔：'
+    $lblRemotePath.SetBounds(20, 112, 100, 24)
+    $grpRemote.Controls.Add($lblRemotePath)
+
+    $script:webRemotePathBox = New-Object Windows.Forms.TextBox
+    $script:webRemotePathBox.Text = '~/.codex/auth.json'
+    $script:webRemotePathBox.SetBounds(130, 109, 320, 26)
+    $grpRemote.Controls.Add($script:webRemotePathBox)
+
+    $script:webTestSshBtn = New-Object Windows.Forms.Button
+    $script:webTestSshBtn.Text = '測試副機 SSH 連線'
+    $script:webTestSshBtn.SetBounds(130, 150, 180, 36)
+    $script:webTestSshBtn.Add_Click({
+        $h = $script:webRemoteHostBox.Text.Trim()
+        $u = $script:webRemoteUserBox.Text.Trim()
+        $p = 22
+        [int]::TryParse($script:webRemotePortBox.Text, [ref]$p) | Out-Null
+        $script:webTestSshBtn.Enabled = $false
+        $script:webTestSshBtn.Text = "連線測試中…"
+        $form.Refresh()
+        try {
+            $sshArgs = @("-p", $p, "-o", "BatchMode=yes", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=accept-new", "$u@$h", "echo OK_CENTOS")
+            $proc = Start-Process -FilePath "ssh.exe" -ArgumentList $sshArgs -Wait -NoNewWindow -PassThru
+            if ($proc.ExitCode -eq 0) {
+                [Windows.Forms.MessageBox]::Show("SSH 連線測試成功！`r`n`r`n目標副機：$u@$h`:$p`r`n狀態：SSH 通道就緒，可安全進行憑證派送與原子覆蓋。", "連線成功", "OK", "Information") | Out-Null
+            } else {
+                [Windows.Forms.MessageBox]::Show("SSH 連線測試失敗 (ExitCode: $($proc.ExitCode))。`r`n請確認副機 IP、帳號及金鑰設定是否正確。", "連線失敗", "OK", "Warning") | Out-Null
+            }
+        } catch {
+            [Windows.Forms.MessageBox]::Show("連線異常：$($_.Exception.Message)", "錯誤", "OK", "Error") | Out-Null
+        } finally {
+            $script:webTestSshBtn.Enabled = $true
+            $script:webTestSshBtn.Text = "測試副機 SSH 連線"
+        }
+    })
+    $grpRemote.Controls.Add($script:webTestSshBtn)
+
+    $lblRemoteHint = New-Object Windows.Forms.Label
+    $lblRemoteHint.Text = '【安全推送保證】憑證由主機 Windows DPAPI 解密後，經由 OpenSSH 安全傳輸，遠端目錄 700 / 檔案 600，主機暫存即時覆寫銷毀。'
+    $lblRemoteHint.SetBounds(20, 205, 490, 56)
+    $lblRemoteHint.ForeColor = [Drawing.Color]::DimGray
+    $lblRemoteHint.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
+    $grpRemote.Controls.Add($lblRemoteHint)
+
+    # === 群組 3: 防衝突安全鎖定保護 (下方橫條) ===
+    $grpLock = New-Object Windows.Forms.GroupBox
+    $grpLock.Text = '防衝突安全鎖定機制 (Collision Lock)'
+    $grpLock.SetBounds(24, 345, 1066, 175)
+    $grpLock.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9.5)
+    $webTab.Controls.Add($grpLock)
+
+    $lblLockDesc = New-Object Windows.Forms.Label
+    $lblLockDesc.Text = '為了防止主機與副機同時使用同一個 OAuth 帳號，導致 Refresh Token 在雲端互相搶佔撤銷（產生 401 錯誤），系統已啟用防衝突安全保護：'
+    $lblLockDesc.SetBounds(20, 25, 1020, 24)
+    $grpLock.Controls.Add($lblLockDesc)
+
+    $script:webHostLockLabel = New-Object Windows.Forms.Label
+    $script:webHostLockLabel.Text = '[鎖定保護] 目前主機執勤帳號：正在讀取…'
+    $script:webHostLockLabel.SetBounds(20, 56, 1020, 32)
+    $script:webHostLockLabel.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 11, [Drawing.FontStyle]::Bold)
+    $script:webHostLockLabel.ForeColor = [Drawing.Color]::Firebrick
+    $grpLock.Controls.Add($script:webHostLockLabel)
+
+    $lblLockPolicy = New-Object Windows.Forms.Label
+    $lblLockPolicy.Text = "• Web 儀表板視圖：主機執勤中帳號將高亮標示「主機使用中」，切換按鈕強制反灰禁用。`r`n• 伺服器 API 防護：即使直接調用 POST /api/switch-remote，後端亦強制比對 Active Key 並回傳 403 Forbidden 拒絕。"
+    $lblLockPolicy.SetBounds(20, 96, 1020, 48)
+    $lblLockPolicy.ForeColor = [Drawing.Color]::FromArgb(60, 75, 90)
+    $grpLock.Controls.Add($lblLockPolicy)
+}
+
+Initialize-WebDashboardTab
+Initialize-GuildView
+$form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries; Stop-AGQuotaQueries; Stop-WebDashboard })
 try {
     if ($PreviewPath) {
         $currentLabel.Text='登入檔帳號：account-a@example.invalid'
@@ -1127,13 +1453,36 @@ try {
         $form.Show(); $form.Refresh()
         $bitmap=New-Object Drawing.Bitmap($form.Width,$form.Height)
         try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
-        if ($PreviewAntigravityPath) {
-            $tabs.SelectedTab = $agTab
-            $form.Refresh()
-            $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
-            try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewAntigravityPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
-        }
-        $form.Close()
+if ($PreviewAntigravityPath) {
+    $tabs.SelectedTab = $agTab
+    $form.Refresh()
+    $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
+    try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewAntigravityPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+}
+if ($PreviewGuildPath) {
+    Set-ViewMode 'Guild'
+    $script:CurrentGuildProduct = 'Codex'
+    Update-GuildView
+    $form.Refresh()
+    $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
+    try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewGuildPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+}
+if ($PreviewGuildAGPath) {
+    Set-ViewMode 'Guild'
+    $script:CurrentGuildProduct = 'Antigravity'
+    Update-GuildView
+    $form.Refresh()
+    $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
+    try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewGuildAGPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+}
+if ($PreviewWebPath) {
+    $tabs.SelectedTab = $webTab
+    $form.Refresh()
+    $bitmap = New-Object Drawing.Bitmap($form.Width,$form.Height)
+    try { $form.DrawToBitmap($bitmap,(New-Object Drawing.Rectangle(0,0,$form.Width,$form.Height))); $bitmap.Save($PreviewWebPath,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+}
+if ($script:MotionTimer) { $script:MotionTimer.Stop(); $script:MotionTimer.Dispose() }
+$form.Close()
     } else {
         Write-SwitcherLog 'INFO' '切換工具視窗已開啟' "PID=$PID"
         if (!$IsolatedAntigravityTestPath) {
@@ -1152,8 +1501,8 @@ try {
         [void]$form.ShowDialog()
     }
 } finally {
-    $quotaTimer.Stop(); $quotaTimer.Dispose(); Stop-QuotaQueries; Stop-AGQuotaQueries
-    if (!$PreviewPath) { Write-SwitcherLog 'INFO' '切換工具視窗已結束' }
+    $quotaTimer.Stop(); $quotaTimer.Dispose(); Stop-QuotaQueries; Stop-AGQuotaQueries; Stop-WebDashboard
+    if (!$isPreviewMode) { Write-SwitcherLog 'INFO' '切換工具視窗已結束' }
     $form.Dispose()
     if ($appIcon) { $appIcon.Dispose() }
     if ($script:AppIconBig) { $script:AppIconBig.Dispose() }
