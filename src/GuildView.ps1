@@ -606,7 +606,7 @@ function Update-GuildView {
         }
 
         # 5 小時進度條
-        $label1 = if ($isAg) { 'Gemini 5 小時用量' } else { '5 小時視窗用量' }
+        $label1 = if ($isAg) { '模型／5 小時額度' } else { '5 小時視窗用量' }
         $script:VanguardBar1Lbl.Text = "${label1}: $($activeItem.SubItems[3].Text)"
         $script:VanguardBar1.Value = if ($null -ne $p1) { [Math]::Max(0, [Math]::Min(100, [int]$p1)) } else { 0 }
 

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -18,21 +19,65 @@ namespace AntigravitySwitcher {
         public string Status;
         public string Json;
         public string PlanJson;
+        public string ModelsJson;
+        public string ModelsStatus;
         public DateTimeOffset ReceivedAt;
     }
 
     public static class QuotaClient {
         private const string QuotaUrl = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
         private const string PlanUrl = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+        private const string ModelsUrl = "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
         private const string TokenUrl = "https://oauth2.googleapis.com/token";
         private const string ClientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 
-        private static HttpRequestMessage Request(string url, string token, string body) {
+        private static HttpRequestMessage Request(string url, string token, string body, string userAgent) {
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.UserAgent.ParseAdd("antigravity");
+            request.Headers.UserAgent.ParseAdd(userAgent);
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
             return request;
+        }
+
+        private static string InstalledUserAgent(string binaryPath) {
+            try {
+                if (string.IsNullOrEmpty(binaryPath)) return "antigravity";
+                string appPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(binaryPath), "..", "..", "Antigravity.exe"));
+                if (File.Exists(appPath)) {
+                    var version = Regex.Match(FileVersionInfo.GetVersionInfo(appPath).FileVersion ?? "", @"^\s*(\d+\.\d+\.\d+(?:\.\d+)?)");
+                    if (version.Success) return "antigravity/" + version.Groups[1].Value;
+                }
+            } catch (IOException) { }
+              catch (ArgumentException) { }
+              catch (UnauthorizedAccessException) { }
+            return "antigravity";
+        }
+
+        private static bool HasGeminiQuota(string json) {
+            try {
+                var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
+                var buckets = new List<object>();
+                object value;
+                if (root.TryGetValue("buckets", out value) && value is System.Collections.IEnumerable)
+                    foreach (var bucket in (System.Collections.IEnumerable)value) buckets.Add(bucket);
+                if (root.TryGetValue("groups", out value) && value is System.Collections.IEnumerable) {
+                    foreach (var entry in (System.Collections.IEnumerable)value) {
+                        var group = entry as Dictionary<string, object>;
+                        if (group != null && group.TryGetValue("buckets", out value) && value is System.Collections.IEnumerable)
+                            foreach (var bucket in (System.Collections.IEnumerable)value) buckets.Add(bucket);
+                    }
+                }
+                foreach (var entry in buckets) {
+                    var bucket = entry as Dictionary<string, object>;
+                    object id, fraction, disabled;
+                    if (bucket == null || !bucket.TryGetValue("bucketId", out id) || (string)id != "gemini-5h" ||
+                        !bucket.TryGetValue("remainingFraction", out fraction) || fraction == null ||
+                        (bucket.TryGetValue("disabled", out disabled) && disabled is bool && (bool)disabled)) continue;
+                    double remaining = Convert.ToDouble(fraction, System.Globalization.CultureInfo.InvariantCulture);
+                    if (remaining >= 0 && remaining <= 1) return true;
+                }
+            } catch { }
+            return false;
         }
 
         private static string InstalledClientSecret(string binaryPath) {
@@ -65,8 +110,9 @@ namespace AntigravitySwitcher {
                     client.Timeout = TimeSpan.FromSeconds(12);
                     client.MaxResponseContentBufferSize = 256 * 1024;
                     string token = accessToken;
+                    string userAgent = InstalledUserAgent(binaryPath);
                     for (int attempt = 0; attempt < 2; attempt++) {
-                        using (var request = Request(QuotaUrl, token, "{}"))
+                        using (var request = Request(QuotaUrl, token, "{}", userAgent))
                         using (var response = await client.SendAsync(request, cancellation).ConfigureAwait(false)) {
                             int code = (int)response.StatusCode;
                             if (code == 200) {
@@ -75,13 +121,33 @@ namespace AntigravitySwitcher {
                                     Json = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
                                 };
                                 try {
-                                    using (var planRequest = Request(PlanUrl, token, "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"))
+                                    using (var planRequest = Request(PlanUrl, token, "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}", userAgent))
                                     using (var planResponse = await client.SendAsync(planRequest, cancellation).ConfigureAwait(false)) {
                                         if (planResponse.IsSuccessStatusCode)
                                             result.PlanJson = await planResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
                                     }
                                 } catch (HttpRequestException) { }
                                   catch (OperationCanceledException) { }
+                                if (!HasGeminiQuota(result.Json)) {
+                                    try {
+                                        var body = "{}";
+                                        if (!string.IsNullOrEmpty(result.PlanJson)) {
+                                            try {
+                                                var plan = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(result.PlanJson);
+                                                object project;
+                                                if (plan.TryGetValue("cloudaicompanionProject", out project) && project is string && !string.IsNullOrEmpty((string)project))
+                                                    body = new JavaScriptSerializer().Serialize(new { project = (string)project });
+                                            } catch { }
+                                        }
+                                        using (var modelRequest = Request(ModelsUrl, token, body, userAgent))
+                                        using (var modelResponse = await client.SendAsync(modelRequest, cancellation).ConfigureAwait(false)) {
+                                            result.ModelsStatus = "HTTP " + (int)modelResponse.StatusCode;
+                                            if (modelResponse.IsSuccessStatusCode)
+                                                result.ModelsJson = await modelResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+                                        }
+                                    } catch (HttpRequestException) { result.ModelsStatus = "NetworkError"; }
+                                      catch (OperationCanceledException) { result.ModelsStatus = cancellation.IsCancellationRequested ? "Canceled" : "Timeout"; }
+                                }
                                 return result;
                             }
                             if (code != 401 || attempt > 0) return new QuotaReply { Status = "HTTP " + code };
@@ -141,19 +207,39 @@ function ConvertFrom-AGQuotaReply($Reply) {
     try {
         $data = $Reply.Json | ConvertFrom-Json
         $buckets = @{}
-        foreach ($group in @($data.groups)) {
-            foreach ($bucket in @($group.buckets)) {
-                if ($bucket.bucketId -in @('gemini-5h','gemini-weekly','3p-5h','3p-weekly') -and
-                    $null -ne $bucket.remainingFraction -and [double]$bucket.remainingFraction -ge 0 -and [double]$bucket.remainingFraction -le 1) {
-                    $buckets[[string]$bucket.bucketId] = $bucket
-                }
+        $allBuckets = @($data.buckets) + @(foreach ($group in @($data.groups)) { $group.buckets })
+        foreach ($bucket in $allBuckets) {
+            if ($bucket.bucketId -in @('gemini-5h','gemini-weekly','3p-5h','3p-weekly') -and !$bucket.disabled -and
+                $null -ne $bucket.remainingFraction -and [double]$bucket.remainingFraction -ge 0 -and [double]$bucket.remainingFraction -le 1) {
+                $buckets[[string]$bucket.bucketId] = $bucket
             }
         }
-        if (!$buckets.Count) { throw 'schema' }
+        $modelQuotas = @()
+        if (!$buckets.ContainsKey('gemini-5h') -and $Reply.ModelsJson) {
+            try {
+                $models = $Reply.ModelsJson | ConvertFrom-Json
+                $modelIds = @($models.tieredModelIds.flashLite) + @($models.tieredModelIds.flash) + @($models.tieredModelIds.pro)
+                $modelIds = @($modelIds | Where-Object { $_ } | Select-Object -Unique)
+                foreach ($property in $models.models.PSObject.Properties) {
+                    if ($property.Name -notmatch '^gemini-' -or ($modelIds.Count -and $property.Name -notin $modelIds) -or
+                        (!$modelIds.Count -and ($property.Name -match 'image' -or !$property.Value.displayName))) { continue }
+                    $info = $property.Value.quotaInfo
+                    if ($null -eq $info.remainingFraction) { continue }
+                    $fraction = 0.0
+                    if (![double]::TryParse([string]$info.remainingFraction, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$fraction) -or
+                        [double]::IsNaN($fraction) -or $fraction -lt 0 -or $fraction -gt 1) { continue }
+                    $modelQuotas += [pscustomobject]@{
+                        Name=$(if ($property.Value.displayName) { $property.Value.displayName } else { $property.Name })
+                        Fraction=$fraction; Reset=[string]$info.resetTime
+                    }
+                }
+            } catch { $modelQuotas = @() }
+        }
+        if (!$buckets.Count -and !$modelQuotas.Count) { throw 'schema' }
         $lines = @('查詢時間：' + $Reply.ReceivedAt.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
         foreach ($spec in @(@('gemini-5h','Gemini 五小時'),@('gemini-weekly','Gemini 每週'),@('3p-5h','Claude/GPT 五小時'),@('3p-weekly','Claude/GPT 每週'))) {
             $bucket = $buckets[$spec[0]]
-            if (!$bucket) { $lines += $spec[1] + '：未知'; continue }
+            if (!$bucket) { $lines += $spec[1] + '：未提供'; continue }
             $percent = [Math]::Round([double]$bucket.remainingFraction * 100, 1)
             $reset = '重置時間未知'
             if ($bucket.resetTime) {
@@ -162,12 +248,24 @@ function ConvertFrom-AGQuotaReply($Reply) {
             }
             $lines += $spec[1] + "：$percent% / $reset"
         }
+        if ($modelQuotas.Count) {
+            $lines += 'G*：模型額度，回應未標示週期；以可用 Gemini 模型的最低剩餘比例顯示。'
+            foreach ($model in @($modelQuotas | Sort-Object Name)) {
+                $reset = '重置時間未提供'
+                $when = [DateTimeOffset]::MinValue
+                if ([DateTimeOffset]::TryParse($model.Reset, [ref]$when)) { $reset = '重置 ' + $when.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz') }
+                $lines += $model.Name + '：' + [Math]::Round($model.Fraction * 100, 1).ToString() + '% / ' + $reset
+            }
+        } elseif (!$buckets.ContainsKey('gemini-5h') -and $Reply.ModelsStatus) {
+            $lines += 'Gemini 模型查詢：' + $Reply.ModelsStatus
+        }
         $g5 = $buckets['gemini-5h']; $c5 = $buckets['3p-5h']
         $gw = $buckets['gemini-weekly']; $cw = $buckets['3p-weekly']
-        $gEffective = if ($g5) { if ($gw -and [double]$gw.remainingFraction -le 0) { 0 } else { [double]$g5.remainingFraction * 100 } } else { $null }
+        $gEffective = if ($gw -and [double]$gw.remainingFraction -le 0) { 0 } elseif ($g5) { [double]$g5.remainingFraction * 100 } elseif ($modelQuotas.Count) { ($modelQuotas | Measure-Object Fraction -Minimum).Minimum * 100 } else { $null }
         $cEffective = if ($c5) { if ($cw -and [double]$cw.remainingFraction -le 0) { 0 } else { [double]$c5.remainingFraction * 100 } } else { $null }
-        $result.FiveHour = 'G ' + $(if ($null -ne $gEffective) { [Math]::Round($gEffective, 1).ToString() + '%' } else { '未知' }) + ' / C ' + $(if ($null -ne $cEffective) { [Math]::Round($cEffective, 1).ToString() + '%' } else { '未知' })
-        $result.Weekly = 'G ' + $(if ($gw) { [Math]::Round([double]$gw.remainingFraction * 100, 1).ToString() + '%' } else { '未知' }) + ' / C ' + $(if ($cw) { [Math]::Round([double]$cw.remainingFraction * 100, 1).ToString() + '%' } else { '未知' })
+        $geminiPrefix = if ($modelQuotas.Count) { 'G* ' } else { 'G ' }
+        $result.FiveHour = $geminiPrefix + $(if ($null -ne $gEffective) { [Math]::Round($gEffective, 1).ToString() + '%' } else { '未知' }) + ' / C ' + $(if ($null -ne $cEffective) { [Math]::Round($cEffective, 1).ToString() + '%' } else { '未知' })
+        $result.Weekly = 'G ' + $(if ($gw) { [Math]::Round([double]$gw.remainingFraction * 100, 1).ToString() + '%' } else { '未提供' }) + ' / C ' + $(if ($cw) { [Math]::Round([double]$cw.remainingFraction * 100, 1).ToString() + '%' } else { '未提供' })
         if ($null -ne $gEffective -or $null -ne $cEffective) { $result.FiveHourRemaining = [Math]::Min($(if ($null -ne $gEffective) { $gEffective } else { 100 }), $(if ($null -ne $cEffective) { $cEffective } else { 100 })) }
         if ($gw -or $cw) { $result.WeeklyRemaining = [Math]::Min($(if ($gw) { [double]$gw.remainingFraction * 100 } else { 100 }), $(if ($cw) { [double]$cw.remainingFraction * 100 } else { 100 })) }
         if ($Reply.PlanJson) {
@@ -183,7 +281,7 @@ function ConvertFrom-AGQuotaReply($Reply) {
                 }
             } catch { }
         }
-        $result.Status = '已更新'
+        $result.Status = if ($buckets.Count -eq 4) { '已更新' } else { '已更新／部分額度' }
         $result.Detail = $lines -join "`r`n"
     } catch { $result.Status='格式不支援'; $result.Detail='服務回傳格式無法辨識。' }
     return $result

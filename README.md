@@ -14,6 +14,7 @@
    - 不刪除、搬移或重設既有專案、Git worktrees、本機歷史對話、`config.toml`、Antigravity 工作區與應用程式資料庫。
 3. **本機高強度安全加密（Windows DPAPI）**：
    - 兩個分頁的已儲存帳號憑證皆以 Windows `ProtectedData` (DPAPI CurrentUser) 加密封裝，分開存放。
+   - 每個產品以電子郵件（忽略大小寫及前後空白）識別唯一帳號；同帳號重新登入或儲存只更新同一筆。既有重複備份取最後儲存的一筆顯示及操作，舊檔保留；Codex 未提供電子郵件時沿用原身分識別，避免合併不明帳號。
    - 僅限原登入 Windows 使用者有權解密，即使備份檔被複製到其他電腦亦無法解密還原。
 4. **安全隔離檢查閘門（Zero-Credential Security Gate）**：
    - 建置腳本採白名單與憑證特徵掃描；提交前仍需檢查差異，掃描不能保證辨識所有秘密格式。
@@ -145,9 +146,9 @@
 2. 點「引導登入新帳號」：工具先備份目前認證，關閉 Antigravity，清除本機登入項目，再啟動官方登入畫面。請在瀏覽器登入另一帳號，返回工具確認後會自動儲存。不要在 Antigravity 按 Sign Out；取消或未偵測到新帳號時，工具會嘗試還原原認證。
 3. 從清單選取帳號後按「切換並重新啟動」。工具會要求先結束執行中任務，關閉桌面版，只替換 `gemini:antigravity` 認證項目並重新啟動。完成後請在 Account 頁確認實際登入；失敗時可按「還原上次切換」。
 
-Antigravity 分頁的「5 小時用量」與「週用量」欄以 `G` 表示 Gemini、`C` 表示 Claude/GPT，分別顯示剩餘比例；滑鼠停留帳號列可查看四個額度的重置時間。顏色依兩組中較低的剩餘比例決定；某組週額度為 0% 時，該組五小時欄也顯示有效剩餘 0%。按鈕下方顯示本輪查詢完成時間。
+Antigravity 分頁的「模型／5 小時用量」與「週用量」欄以 `G` 表示 Gemini、`C` 表示 Claude/GPT。摘要未提供 Gemini 時，改以 `G*` 顯示可用 Gemini 語言模型的最低剩餘比例；模型回應未標明週期，因此不視為固定五小時額度，也不推算每週額度。滑鼠停留帳號列可查看各模型的剩餘比例與重置時間；未提供的週額度明示「未提供」，查詢狀態為「已更新／部分額度」。完整摘要維持四個視窗的顯示與每週歸零保護，按鈕下方顯示本輪查詢完成時間。
 
-額度直接使用帳號的存取權杖向 Google `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` 查詢；方案使用 `loadCodeAssist`。過期時使用備份內的刷新權杖與已安裝 Antigravity 程式中的 OAuth 用戶端設定，在記憶體中取得新存取權杖。此流程不需 CLI，也不修改備份或目前登入。這些是 Antigravity 內部端點與程式設定，版本更新後可能改變；查詢失敗會顯示狀態，不影響切換。兩個真實備份帳號已驗證額度查詢，其中一份經權杖刷新後成功。兩個真實帳號也已驗證免瀏覽器重登切換與引導登入，工作區及對話仍保留。
+額度直接使用帳號的存取權杖向 Google `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` 查詢；方案使用 `loadCodeAssist`。請求的 `User-Agent` 自動帶入已安裝 `Antigravity.exe` 的檔案版本（`antigravity/<版本>`）；僅送 `antigravity` 可能使服務省略 Gemini 五小時及每週摘要。缺少 Gemini 摘要時，額外呼叫同一主機的 `fetchAvailableModels`，只使用明確回傳的 `quotaInfo.remainingFraction`，不將缺漏資料補為 100%。過期時使用備份內的刷新權杖與已安裝 Antigravity 程式中的 OAuth 用戶端設定，在記憶體中取得新存取權杖。此流程不需 CLI，也不修改備份或目前登入。這些是 Antigravity 內部端點與程式設定，版本更新後可能改變；查詢失敗會顯示狀態，不影響切換。四個真實備份帳號已驗證 Gemini 與 Claude/GPT 的五小時及每週額度。兩個真實帳號也已驗證免瀏覽器重登切換與引導登入，工作區及對話仍保留。
 
 新版首次啟動會驗證 `%LOCALAPPDATA%\CodexAccountSwitcher` 的舊版 Codex 加密備份，將尚未存在的帳號複製到 `%LOCALAPPDATA%\CodexAntigravitySwitcher`。舊版原件保留；若新版已有同一帳號的備份，不覆寫新版資料。桌面與開始功能表捷徑使用舊版相同的金鑰圖示。
 

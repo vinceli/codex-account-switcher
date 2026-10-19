@@ -102,10 +102,16 @@ function Get-AGIdentity([byte[]]$Bytes) {
         $payload = $payload.PadRight($payload.Length + ((4 - $payload.Length % 4) % 4), '=')
         $claims = $script:Utf8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
         if (!$claims.sub -or !$claims.email) { throw 'identity' }
+        $email = ([string]$claims.email).Trim()
+        if (!$email) { throw 'identity' }
+        $identity = 'email:' + $email.ToLowerInvariant()
         $sha = [Security.Cryptography.SHA256]::Create()
-        try { $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes([string]$claims.sub)))).Replace('-', '').ToLowerInvariant() }
+        try {
+            $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($identity)))).Replace('-', '').ToLowerInvariant()
+            $legacyKey = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes([string]$claims.sub)))).Replace('-', '').ToLowerInvariant()
+        }
         finally { $sha.Dispose() }
-        [pscustomobject]@{ Key=$key; Email=[string]$claims.email }
+        [pscustomobject]@{ Key=$key; LegacyKey=$legacyKey; Email=$email }
     } catch { throw 'Antigravity 登入資料格式不支援或已損壞，沒有修改認證。' }
 }
 
@@ -134,7 +140,7 @@ function Read-AGBackup([string]$Path) {
         $entry.Persist = [int]$record.Persist
         $entry.Flags = [int]$record.Flags
         $identity = Get-AGIdentity $entry.Blob
-        if ($record.Key -ne $identity.Key -or $entry.Persist -lt 1 -or $entry.Persist -gt 3) { throw 'identity' }
+        if ($record.Key -notin @($identity.Key, $identity.LegacyKey) -or $entry.Persist -lt 1 -or $entry.Persist -gt 3) { throw 'identity' }
         [pscustomobject]@{ Name=[string]$record.Name; Key=$identity.Key; Email=$identity.Email; Saved=[string]$record.Saved; Entry=$entry; Path=$Path }
     } catch { throw '無法解密或驗證 Antigravity 備份；原始備份已保留。' }
 }
@@ -159,7 +165,10 @@ function Save-AGBackup([object]$Current, [string]$Name, [string]$Path) {
 
 function Backup-AGCurrent([object]$Current, [string]$Name) {
     $path = Join-Path $script:AGStorePath ($Current.Identity.Key + '.bin')
-    if (!$Name) { $Name = if (Test-Path -LiteralPath $path) { (Read-AGBackup $path).Name } else { '自動備份 ' + $Current.Identity.Email } }
+    if (!$Name) {
+        $existing = Get-AccountBackups -Antigravity | Where-Object { $_.Key -eq $Current.Identity.Key }
+        $Name = if ($existing) { $existing.Name } else { '自動備份 ' + $Current.Identity.Email }
+    }
     Save-AGBackup $Current $Name $path
 }
 

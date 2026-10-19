@@ -185,12 +185,17 @@ function Get-Identity([byte[]]$Bytes) {
         $payload = $payload.PadRight($payload.Length + ((4 - $payload.Length % 4) % 4), '=')
         $claims = $script:Utf8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
         if (!$claims.sub) { throw 'subject' }
-        $identity = [string]$claims.sub + '|' + [string]$auth.tokens.account_id
+        $legacyIdentity = [string]$claims.sub + '|' + [string]$auth.tokens.account_id
+        $email = if (![string]::IsNullOrWhiteSpace($claims.email)) { ([string]$claims.email).Trim() } else { '' }
+        $identity = if ($email) { 'email:' + $email.ToLowerInvariant() } else { $legacyIdentity }
         $sha = [Security.Cryptography.SHA256]::Create()
-        try { $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($identity)))).Replace('-', '').ToLowerInvariant() }
+        try {
+            $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($identity)))).Replace('-', '').ToLowerInvariant()
+            $legacyKey = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($legacyIdentity)))).Replace('-', '').ToLowerInvariant()
+        }
         finally { $sha.Dispose() }
-        $email = if ($claims.email) { [string]$claims.email } else { '未提供電子郵件' }
-        [pscustomobject]@{ Key = $key; Email = $email; Account = [string]$auth.tokens.account_id }
+        if (!$email) { $email = '未提供電子郵件' }
+        [pscustomobject]@{ Key = $key; LegacyKey = $legacyKey; Email = $email; Account = [string]$auth.tokens.account_id }
     } catch { throw '登入檔格式不支援或已損壞。請先在 Codex 使用 ChatGPT 帳號登入；本工具不支援 API Key。' }
 }
 
@@ -223,9 +228,24 @@ function Read-Backup([string]$Path) {
         $record = $script:Utf8.GetString($plain) | ConvertFrom-Json
         $bytes = [Convert]::FromBase64String($record.Auth)
         $identity = Get-Identity $bytes
-        if ($record.Key -ne $identity.Key) { throw 'identity' }
-        [pscustomobject]@{ Name = [string]$record.Name; Key = $identity.Key; Email = $identity.Email; Saved = [string]$record.Saved; Bytes = $bytes; Path = $Path }
+        if ($record.Key -notin @($identity.Key, $identity.LegacyKey)) { throw 'identity' }
+        [pscustomobject]@{ Name = [string]$record.Name; Key = $identity.Key; StoredKey = [string]$record.Key; Email = $identity.Email; Saved = [string]$record.Saved; Bytes = $bytes; Path = $Path }
     } catch { throw '無法解密或驗證備份。備份只能由原本的 Windows 使用者開啟。' }
+}
+
+function Get-AccountBackups([switch]$Antigravity, [ref]$BadCount) {
+    $store = if ($Antigravity) { $script:AGStorePath } else { $script:StorePath }
+    $records = @(
+        foreach ($file in @(Get-ChildItem -LiteralPath $store -Filter '*.bin' -File -ErrorAction SilentlyContinue)) {
+            try {
+                if ($Antigravity) { Read-AGBackup $file.FullName }
+                else { Read-Backup $file.FullName }
+            } catch { if ($BadCount) { $BadCount.Value++ } }
+        }
+    )
+    $records | Sort-Object @{ Expression='Saved'; Descending=$true },
+        @{ Expression={ $_.Path -ieq (Join-Path $store ($_.Key + '.bin')) }; Descending=$true }, Path |
+        Group-Object Key | ForEach-Object { $_.Group[0] }
 }
 
 function Import-LegacyCodexBackups([string]$LegacyStore) {
@@ -233,14 +253,17 @@ function Import-LegacyCodexBackups([string]$LegacyStore) {
     $sources = @(
         foreach ($file in @(Get-ChildItem -LiteralPath $LegacyStore -Filter '*.bin' -File)) {
             $record = Read-Backup $file.FullName
-            if ($file.BaseName -cne $record.Key) { throw '舊版備份檔名與帳號身分不符，已停止繼承。' }
-            [pscustomobject]@{ Source=$file.FullName; Name=$file.Name; Key=$record.Key; Bytes=$record.Bytes }
+            if ($file.BaseName -cne $record.StoredKey) { throw '舊版備份檔名與帳號身分不符，已停止繼承。' }
+            [pscustomobject]@{ Source=$file.FullName; Name=$file.Name; Key=$record.Key; Saved=$record.Saved; Bytes=$record.Bytes }
         }
     )
     if (!$sources.Count) { return 0 }
     [IO.Directory]::CreateDirectory($script:StorePath) | Out-Null
     $imported = 0
-    foreach ($source in $sources) {
+    $existingKeys = @{}
+    foreach ($record in @(Get-AccountBackups)) { $existingKeys[$record.Key] = $true }
+    foreach ($source in @($sources | Sort-Object Saved -Descending)) {
+        if ($existingKeys.ContainsKey($source.Key)) { continue }
         $target = Join-Path $script:StorePath $source.Name
         if (Test-Path -LiteralPath $target) { continue }
         $temp = Join-Path $script:StorePath ([guid]::NewGuid().ToString('N') + '.tmp')
@@ -251,6 +274,7 @@ function Import-LegacyCodexBackups([string]$LegacyStore) {
                 throw '繼承備份驗證失敗。'
             }
             [IO.File]::Move($temp, $target)
+            $existingKeys[$source.Key] = $true
             $imported++
         } finally {
             if (Test-Path -LiteralPath $temp) { [IO.File]::Delete($temp) }
@@ -274,7 +298,8 @@ function Save-Backup([byte[]]$Bytes, [string]$Name, [string]$Path) {
 function Backup-Current([object]$Current, [string]$Name) {
     $path = Join-Path $script:StorePath ($Current.Identity.Key + '.bin')
     if (!$Name) {
-        $Name = if (Test-Path -LiteralPath $path) { (Read-Backup $path).Name } else { '自動備份 ' + $Current.Identity.Email }
+        $existing = Get-AccountBackups | Where-Object { $_.Key -eq $Current.Identity.Key }
+        $Name = if ($existing) { $existing.Name } else { '自動備份 ' + $Current.Identity.Email }
     }
     Save-Backup $Current.Bytes $Name $path
 }
@@ -949,9 +974,8 @@ function Refresh-Accounts {
         $nameBox.Text = $current.Identity.Email
     } catch { $currentLabel.Text = '登入檔狀態：' + $_.Exception.Message }
     $bad=0
-    foreach ($file in @(Get-ChildItem -LiteralPath $script:StorePath -Filter '*.bin' -ErrorAction SilentlyContinue)) {
+    foreach ($record in @(Get-AccountBackups -BadCount ([ref]$bad))) {
         try {
-            $record = Read-Backup $file.FullName
             $item = New-Object Windows.Forms.ListViewItem($record.Name)
             [void]$item.SubItems.Add($record.Email)
             foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
@@ -1023,9 +1047,8 @@ function Sync-WebDashboardAccounts {
             } catch { }
         }
     } else {
-        foreach ($file in @(Get-ChildItem -LiteralPath $script:StorePath -Filter '*.bin' -ErrorAction SilentlyContinue)) {
+        foreach ($rec in @(Get-AccountBackups)) {
             try {
-                $rec = Read-Backup $file.FullName
                 $accounts += [pscustomobject]@{
                     Key = $rec.Key
                     Name = $rec.Name
@@ -1059,9 +1082,8 @@ function Refresh-AGAccounts {
         $agNameBox.Text = $current.Identity.Email
     } catch { $agCurrentLabel.Text = '登入狀態：' + $_.Exception.Message }
     $bad = 0
-    foreach ($file in @(Get-ChildItem -LiteralPath $script:AGStorePath -Filter '*.bin' -ErrorAction SilentlyContinue)) {
+    foreach ($record in @(Get-AccountBackups -Antigravity -BadCount ([ref]$bad))) {
         try {
-            $record = Read-AGBackup $file.FullName
             $item = New-Object Windows.Forms.ListViewItem($record.Name)
             [void]$item.SubItems.Add($record.Email)
             foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
@@ -1148,7 +1170,7 @@ $agSave = New-Button '儲存目前帳號' 908 106 184 {
 }
 $agList = New-Object Windows.Forms.ListView
 $agList.SetBounds(26,158,1066,206); $agList.View='Details'; $agList.FullRowSelect=$true; $agList.MultiSelect=$false; $agList.HideSelection=$false; $agList.ShowItemToolTips=$true
-foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$agList.Columns.Add($column[0],$column[1]) }
+foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('模型／5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$agList.Columns.Add($column[0],$column[1]) }
 $agTab.Controls.Add($agList)
 $agSwitch = New-Button '切換並重新啟動' 26 380 160 {
     Invoke-Action {
@@ -1177,7 +1199,7 @@ $agLog = New-Button '查看日誌 (Log)' 934 16 158 {
 }
 $agStatus = New-Label '只切換 Antigravity 認證；保留工作區、對話及設定。' 26 430 1066 40
 $agStatus.ForeColor = [Drawing.Color]::FromArgb(45,75,90)
-$agNote = New-Label '額度唯讀查詢；G 為 Gemini、C 為 Claude/GPT。滑鼠停留帳號列可查看各組重置時間。' 26 480 1066 42
+$agNote = New-Label 'G：Gemini、C：Claude/GPT；G* 為模型額度（回應未標示週期）。未提供的週額度不估算；滑鼠停留可查看明細。' 26 480 1066 42
 $agNote.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8)
 $script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog,$agSave,$agSwitch,$agRestore,$agLogin,$agRefresh,$agLog)
 if ($IsolatedAntigravityTestPath) {
