@@ -33,7 +33,7 @@ flowchart TD
    - 自包含單檔 GUI 安裝器，負責檔案解包、桌面捷徑與開始功能表建立、Windows 應用程式清單註冊。
 5. **Antigravity 認證 (`AntigravityCredential.ps1`)**：
    - 僅讀寫 Generic Credential `gemini:antigravity`，驗證 ID Token 身分並以 DPAPI 儲存各帳號備份。
-   - 停止 Antigravity 2.0 桌面版後替換認證，讀回驗證；失敗時回寫切換前認證。
+   - 先正常關閉 Antigravity 2.0 桌面版，再強制結束殘留桌面程序、相同安裝目錄的語言服務（含孤兒服務）與子程序；以 PID 及建立時間辨識原有程序，避免誤關 PID 重用後的其他程序。確認全部退出後才替換認證並讀回驗證，驗證成功後重新啟動；認證替換失敗時回寫切換前認證。其他 CLI／IDE 執行時仍阻止切換。
    - 引導新增帳號時先備份目前認證，停止桌面版、清除本機認證，再啟動官方登入；確認新身分後儲存。取消或未完成時還原原認證。
    - 不替換 `%APPDATA%\Antigravity`、`~/.gemini/antigravity` 或任何工作區、對話資料庫。
 6. **Antigravity 額度 (`AntigravityQuota.ps1`)**：

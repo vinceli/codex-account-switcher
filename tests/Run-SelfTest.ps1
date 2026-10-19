@@ -14,6 +14,8 @@ $result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $switcherScr
 Write-Host $result
 
 if ($LASTEXITCODE -eq 0 -and $result -match '^PASS') {
+    & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'AntigravityProcess.Tests.ps1')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'AccountIdentity.Tests.ps1')
     if ($LASTEXITCODE -ne 0) { exit 1 }
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'AntigravityQuota.Tests.ps1')

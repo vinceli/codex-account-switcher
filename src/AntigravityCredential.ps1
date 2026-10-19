@@ -208,18 +208,32 @@ function Get-AGDesktopProcesses([object]$App) {
     @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($App.Exe, [StringComparison]::OrdinalIgnoreCase) })
 }
 
+function Get-AGDesktopProcessTree([object]$App, [object[]]$Processes) {
+    $helperExe = Join-Path (Split-Path -Parent $App.Exe) 'resources\bin\language_server.exe'
+    $owned = New-Object 'Collections.Generic.Dictionary[int,datetime]'
+    foreach ($item in $Processes) {
+        if ($item.ExecutablePath -and ($item.ExecutablePath.Equals($App.Exe, [StringComparison]::OrdinalIgnoreCase) -or $item.ExecutablePath.Equals($helperExe, [StringComparison]::OrdinalIgnoreCase))) {
+            $owned[[int]$item.ProcessId] = [datetime]$item.CreationDate
+        }
+    }
+    do {
+        $changed = $false
+        foreach ($item in $Processes) {
+            if ($owned.ContainsKey([int]$item.ParentProcessId) -and !$owned.ContainsKey([int]$item.ProcessId) -and $item.CreationDate -ge $owned[[int]$item.ParentProcessId]) {
+                $owned.Add([int]$item.ProcessId, [datetime]$item.CreationDate)
+                $changed = $true
+            }
+        }
+    } while ($changed)
+    @($Processes | Where-Object { $owned.ContainsKey([int]$_.ProcessId) })
+}
+
 function Stop-AGDesktop([object]$App) {
     $all = @(Get-CimInstance Win32_Process)
     $other = @($all | Where-Object { $_.Name -in @('agy.exe','Antigravity IDE.exe') })
     if ($other.Count) { throw '偵測到 Antigravity CLI 或 IDE。請先關閉其他用戶端，再切換桌面版帳號。' }
     $desktop = @($all | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($App.Exe, [StringComparison]::OrdinalIgnoreCase) })
-    $owned = New-Object 'Collections.Generic.HashSet[int]'
-    foreach ($item in $desktop) { [void]$owned.Add([int]$item.ProcessId) }
-    do {
-        $changed = $false
-        foreach ($item in $all) { if ($owned.Contains([int]$item.ParentProcessId) -and $owned.Add([int]$item.ProcessId)) { $changed = $true } }
-    } while ($changed)
-    $helpers = @($all | Where-Object { $owned.Contains([int]$_.ProcessId) -and $_.Name -eq 'language_server.exe' })
+    $tracked = @(Get-AGDesktopProcessTree $App $all)
     foreach ($item in $desktop) {
         $process = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
         if (!$process) { continue }
@@ -229,11 +243,19 @@ function Stop-AGDesktop([object]$App) {
     }
     $deadline = (Get-Date).AddSeconds(10)
     while (@(Get-AGDesktopProcesses $App).Count -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
-    if (@(Get-AGDesktopProcesses $App).Count) { throw 'Antigravity 尚未完全關閉；請手動關閉後重試，認證尚未替換。' }
     $now = @(Get-CimInstance Win32_Process)
-    if (@($helpers | Where-Object { $helper = $_; $now | Where-Object { $_.ProcessId -eq $helper.ProcessId -and $_.CreationDate -eq $helper.CreationDate } }).Count) {
-        throw 'Antigravity 語言服務仍在執行；請手動關閉後重試，認證尚未替換。'
-    }
+    $remaining = @($tracked | Where-Object { $item = $_; $now | Where-Object { $_.ProcessId -eq $item.ProcessId -and $_.CreationDate -eq $item.CreationDate } })
+    $tracked = @(@($remaining) + @(Get-AGDesktopProcessTree $App $now) | Sort-Object ProcessId -Unique)
+    foreach ($item in $tracked) { Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue }
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        $now = @(Get-CimInstance Win32_Process)
+        $remaining = @(Get-AGDesktopProcessTree $App $now)
+        $remaining += @($tracked | Where-Object { $item = $_; $now | Where-Object { $_.ProcessId -eq $item.ProcessId -and $_.CreationDate -eq $item.CreationDate } })
+        if (!$remaining.Count) { return }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    throw '無法結束 Antigravity 或其背景服務，認證尚未替換。請確認程序權限後重試。'
 }
 
 function Start-AGDesktop([object]$App) {
