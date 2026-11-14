@@ -32,12 +32,12 @@ flowchart TD
 4. **安裝精靈 (`Installer.cs`)**：
    - 自包含單檔 GUI 安裝器，負責檔案解包、桌面捷徑與開始功能表建立、Windows 應用程式清單註冊。
 5. **Antigravity 認證 (`AntigravityCredential.ps1`)**：
-   - 僅讀寫 Generic Credential `gemini:antigravity`，驗證 ID Token 身分並以 DPAPI 儲存各帳號備份。
+   - 僅讀寫 Generic Credential `gemini:antigravity`，支援舊版 `id_token` 與新版 `id_token_email` 身分格式，並以 DPAPI 儲存各帳號備份。
    - 先正常關閉 Antigravity 2.0 桌面版，再強制結束殘留桌面程序、相同安裝目錄的語言服務（含孤兒服務）與子程序；以 PID 及建立時間辨識原有程序，避免誤關 PID 重用後的其他程序。確認全部退出後才替換認證並讀回驗證，驗證成功後重新啟動；認證替換失敗時回寫切換前認證。其他 CLI／IDE 執行時仍阻止切換。
    - 引導新增帳號時先備份目前認證，停止桌面版、清除本機認證，再啟動官方登入；確認新身分後儲存。取消或未完成時還原原認證。
    - 不替換 `%APPDATA%\Antigravity`、`~/.gemini/antigravity` 或任何工作區、對話資料庫。
 6. **Antigravity 額度 (`AntigravityQuota.ps1`)**：
-   - 以已儲存帳號的存取權杖查詢 Gemini、Claude/GPT 摘要與方案；缺少 Gemini 摘要時改讀模型額度，明示來源及未提供的視窗。
+   - 以已儲存帳號的存取權杖查詢 Gemini、Claude/GPT、Argon 三組額度與方案；每次查詢模型以偵測 Argon，摘要優先，缺少時以同組模型補充，明示來源及未提供的視窗。
    - 存取權杖過期時，僅在記憶體中以刷新權杖換發；OAuth 用戶端設定取自已安裝的 Antigravity 程式，不寫入原始認證或備份。
 
 ---
@@ -69,12 +69,12 @@ flowchart TD
 
 Codex 的 `QuotaClient.Fetch` 使用 .NET HttpClient 非同步 GET，WinForms Timer 收取已完成 Task。目標限定 `https://chatgpt.com/backend-api/wham/usage`，不跟隨重新導向、無 Cookie、3 秒逾時、回應上限 256 KiB。僅回傳狀態及成功 JSON，錯誤本文與例外內容不寫入日誌。
 
-Codex 目前帳號使用最新登入檔，其他帳號使用現有加密備份；查詢不刷新或回寫認證。Antigravity 目前帳號使用認證管理員中的登入，其他帳號使用加密備份；非同步 POST 至 Google Cloud Code 的 `retrieveUserQuotaSummary`，必要時向 Google OAuth 換發短期權杖，並以 `loadCodeAssist` 查方案。結果依帳號 Key 及查詢世代更新，重新整理、切換／登入／還原、關閉視窗取消舊請求。兩組模型的額度同列顯示，重置時間放在列提示。
+Codex 目前帳號使用最新登入檔，其他帳號使用現有加密備份；查詢不刷新或回寫認證。Antigravity 目前帳號使用認證管理員中的登入，其他帳號使用加密備份；非同步 POST 至 Google Cloud Code 的 `retrieveUserQuotaSummary`，必要時向 Google OAuth 換發短期權杖，並以 `loadCodeAssist` 查方案。結果依帳號 Key 及查詢世代更新，重新整理、切換／登入／還原、關閉視窗取消舊請求。三組模型的額度同列顯示，括號內顯示重置時間／剩餘天數，列提示提供完整本地時間。兩分頁移除名稱輸入與名稱欄，清單、公會及 Web 直接顯示電子郵件；既有備份的名稱中繼資料仍可讀取。
 
-額度、方案與模型請求共用 `antigravity/<版本>` 的 `User-Agent`。版本從 `language_server.exe` 所在 `resources/bin` 目錄向上定位 `Antigravity.exe`，讀取檔案版本，避免固定版本號；未能讀取時沿用 `antigravity`。服務會依此標頭決定摘要內容，僅送產品名稱可能省略 Gemini 五小時及每週視窗。
+額度、方案與模型請求共用 `antigravity/hub/<版本> windows/<架構>` 的 `User-Agent`，與桌面版的 `--subclient_type hub` 識別對齊。版本從 `language_server.exe` 所在 `resources/bin` 目錄向上定位 `Antigravity.exe`，讀取檔案版本；未能讀取時保留 `antigravity/hub windows/<架構>`。原生字串含多個斜線，使用 `TryAddWithoutValidation` 加入固定格式標頭，避免 .NET 產品語法解析器拒絕。相同帳號、API 與本文的對照實查確認：缺少 `hub` 時只回傳 Gemini／Claude，加上後即回傳 Argon。
 
-當摘要缺少有效的 `gemini-5h`（含停用或缺少比例）時，以同一存取權杖呼叫 `fetchAvailableModels`；有 `cloudaicompanionProject` 時一併帶入。優先採用 `tieredModelIds` 指定的 Gemini 語言模型，取明確提供且介於 0 至 1 的 `quotaInfo.remainingFraction` 最低值，顯示 `G*` 並逐項列出模型與重置時間。模型回應未標明週期，不宣稱為五小時額度，也不推算週額度；缺漏顯示「未提供」，狀態標記「已更新／部分額度」。未明確回傳的比例保持未知，不預設滿額。模型查詢錯誤、取消或格式損壞不覆蓋已取得的 Claude/GPT 摘要。
+每次以同一存取權杖呼叫 `fetchAvailableModels`，有 `cloudaicompanionProject` 時一併帶入。忽略停用欄位或 `-disabled`／`_disabled` 結尾的占位模型；先依模型 ID 或顯示名稱辨識 Argon，再篩選 `tieredModelIds` 指定的一般 Gemini 語言模型，避免把 Argon 混入 Gemini。各組取明確提供且介於 0 至 1 的 `quotaInfo.remainingFraction` 最低值，重置時間沿用該模型的 `resetTime`，以 `G*`／`C*`／`A*` 標示。模型回應未標明週期，不宣稱為五小時額度，也不推算週額度；缺漏顯示「未提供」，狀態標記「已更新／部分額度」。查詢錯誤、取消或格式損壞不覆蓋已取得的摘要。
 
-傳統清單及公會視圖將首欄標為「模型／5 小時」以區分兩種來源；完整摘要保持原有視窗與每週歸零規則。
+傳統清單及公會視圖以 G／C／A 顯示三組資料。重置格式共用 Codex 的 `Format-QuotaWindow`：五小時／模型額度顯示本地重置時間，週額度少於 12 小時顯示時間，其他顯示剩餘時數或天數；缺少時間時明示未知。同組週額度歸零時，同組主要額度同步標示耗盡。真實 Argon bucket 為 `gemini-argon-wtu-weekly`，映射為獨立每週窗口；有此摘要且未提供 Argon 五小時窗口時，五小時欄標示「A 僅每週」，不再使用同一模型週額度填入主要窗口。完整 Gemini／Claude 四窗口加 Argon 每週窗口即標為「已更新」。hub 標頭、真實 bucket、每週歸零與各模型來源隔離、非同步更新及取消已通過合成測試；本次經使用者授權唯讀查詢 4 個去重後的備份帳號，修正後有 3 個成功取得真實 Argon 每週比例與重置時間，另一個未回傳。未切換帳號或回寫憑證／備份。
 
 Codex 欄位與驗證方式見 [額度查詢計畫](../implementation_plan/quota_display.md)。兩產品的額度端點都屬內部介面，查詢失敗不阻擋帳號切換。

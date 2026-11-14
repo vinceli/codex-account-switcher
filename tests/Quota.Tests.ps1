@@ -113,13 +113,14 @@ try {
     foreach ($case in @(@(125,'0%'),@(-5,'100%'))) {
         Check ((Format-QuotaWindow ([pscustomobject]@{ used_percent=$case[0] }) $now).Text.Contains($case[1])) '百分比上下限'
     }
+    Check ((Format-QuotaWindow ([pscustomobject]@{ used_percent=13.57558 }) $now).Remaining -eq 86.4) '共用格式保留一位小數，不因數值上限轉成整數'
     Check ((Format-QuotaWindow ([pscustomobject]@{ used_percent='NaN'; reset_at=1 }) $now).Text -like '*未知*待重新整理*') '無效數值及過期時間'
     foreach ($badJson in @('not-json','{}','[]','null')) {
         Check ((ConvertFrom-QuotaReply ([pscustomobject]@{ Status='OK'; Json=$badJson; ReceivedAt=$now })).Status -eq '格式不支援') '不支援的回應'
     }
     foreach ($key in @('B','A')) {
         $item=New-Object Windows.Forms.ListViewItem($key); $item.Name=$key
-        1..7 | ForEach-Object { [void]$item.SubItems.Add('waiting') }
+        1..6 | ForEach-Object { [void]$item.SubItems.Add('waiting') }
         [void]$list.Items.Add($item)
     }
     $handler=New-Object QuotaTestHandler; $handler.Body=$json; $handler.Delay=500
@@ -133,11 +134,11 @@ try {
     while (!$task.IsCompleted) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10 }
     $timer.Stop(); $timer.Dispose()
     Update-QuotaResults
-    Check ($script:Ticks -gt 3 -and $list.Items['A'].SubItems[2].Text -eq 'plus' -and $list.Items['B'].SubItems[2].Text -eq 'waiting') '查詢期間 UI 回應、依 Key 更新而非列索引'
+    Check ($script:Ticks -gt 3 -and $list.Items['A'].SubItems[1].Text -eq 'plus' -and $list.Items['B'].SubItems[1].Text -eq 'waiting') '查詢期間 UI 回應、依 Key 更新而非列索引'
     $staleCancel=New-Object Threading.CancellationTokenSource
     $script:QuotaJobs=@([pscustomobject]@{ Key='B'; Generation=-1; Cancellation=$staleCancel; Task=$task })
     Update-QuotaResults
-    Check ($list.Items['B'].SubItems[2].Text -eq 'waiting') '忽略前一輪已完成結果'
+    Check ($list.Items['B'].SubItems[1].Text -eq 'waiting') '忽略前一輪已完成結果'
     1..3 | ForEach-Object {
         $handler=New-Object QuotaTestHandler; $handler.Delay=10000
         $c=New-Object Threading.CancellationTokenSource

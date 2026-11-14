@@ -168,7 +168,7 @@ function Initialize-GuildView {
     # 1. 建立傳統清單視圖下的切換按鈕（置於兩個分頁右上角日誌按鈕左側）
     $btnToGuildCodex = New-Object Windows.Forms.Button
     $btnToGuildCodex.Text = '切換公會戰情室 (Guild)'
-    $btnToGuildCodex.SetBounds(740, 16, 182, 36)
+    $btnToGuildCodex.SetBounds(920, 16, 182, 36)
     $btnToGuildCodex.FlatStyle = 'Flat'
     $btnToGuildCodex.BackColor = [Drawing.Color]::FromArgb(235, 238, 242)
     $btnToGuildCodex.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
@@ -182,7 +182,7 @@ function Initialize-GuildView {
 
     $btnToGuildAG = New-Object Windows.Forms.Button
     $btnToGuildAG.Text = '切換公會戰情室 (Guild)'
-    $btnToGuildAG.SetBounds(740, 16, 182, 36)
+    $btnToGuildAG.SetBounds(920, 16, 182, 36)
     $btnToGuildAG.FlatStyle = 'Flat'
     $btnToGuildAG.BackColor = [Drawing.Color]::FromArgb(235, 238, 242)
     $btnToGuildAG.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
@@ -307,24 +307,24 @@ function Initialize-GuildView {
 
     # 5 小時能量條
     $script:VanguardBar1Lbl = New-Object Windows.Forms.Label
-    $script:VanguardBar1Lbl.SetBounds(25, 274, 385, 20)
+    $script:VanguardBar1Lbl.SetBounds(25, 268, 385, 32)
     $script:VanguardBar1Lbl.ForeColor = [Drawing.Color]::FromArgb(226, 232, 240)
     $script:VanguardBar1Lbl.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9)
     $script:VanguardPanel.Controls.Add($script:VanguardBar1Lbl)
 
     $script:VanguardBar1 = New-Object Windows.Forms.ProgressBar
-    $script:VanguardBar1.SetBounds(25, 296, 385, 16)
+    $script:VanguardBar1.SetBounds(25, 302, 385, 16)
     $script:VanguardPanel.Controls.Add($script:VanguardBar1)
 
     # 每週戰力槽
     $script:VanguardBar2Lbl = New-Object Windows.Forms.Label
-    $script:VanguardBar2Lbl.SetBounds(25, 320, 385, 20)
+    $script:VanguardBar2Lbl.SetBounds(25, 320, 385, 32)
     $script:VanguardBar2Lbl.ForeColor = [Drawing.Color]::FromArgb(226, 232, 240)
     $script:VanguardBar2Lbl.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 9)
     $script:VanguardPanel.Controls.Add($script:VanguardBar2Lbl)
 
     $script:VanguardBar2 = New-Object Windows.Forms.ProgressBar
-    $script:VanguardBar2.SetBounds(25, 342, 385, 16)
+    $script:VanguardBar2.SetBounds(25, 354, 385, 16)
     $script:VanguardPanel.Controls.Add($script:VanguardBar2)
 
     # 先鋒操作按鈕
@@ -395,36 +395,21 @@ function Initialize-GuildView {
     $script:BtnRosterBackup.Cursor = [Windows.Forms.Cursors]::Hand
     $script:BtnRosterBackup.Add_Click({
         if ($script:CurrentGuildProduct -eq 'Antigravity') {
-            $defaultName = ''
-            try {
+            Invoke-Action {
                 $cur = Read-AGCurrent
-                if ($cur -and $cur.Identity -and $cur.Identity.Email) { $defaultName = $cur.Identity.Email }
-            } catch { }
-            $inputName = Show-GuildInputDialog '請輸入要備份的 Antigravity 英雄自訂名稱：' '登記新英雄' $defaultName
-            if ($inputName) {
-                Invoke-Action {
-                    $cur = Read-AGCurrent
-                    Save-AGBackup $cur $inputName ''
-                    Set-Status '已加密儲存 Antigravity 認證。'
-                } { Refresh-AGAccounts }
-            }
+                Save-AGBackup $cur $cur.Identity.Email ''
+                Set-Status '已加密儲存 Antigravity 認證。'
+            } { Refresh-AGAccounts }
         } else {
-            $defaultName = ''
-            try {
+            Invoke-Action {
                 $cur = Read-Current
-                if ($cur -and $cur.Identity -and $cur.Identity.Email) { $defaultName = $cur.Identity.Email }
-            } catch { }
-            $inputName = Show-GuildInputDialog '請輸入要備份的 Codex 英雄自訂名稱：' '登記新英雄' $defaultName
-            if ($inputName) {
-                Invoke-Action {
-                    $cur = Read-Current
-                    Backup-Current $cur $inputName
-                    Refresh-Accounts
-                    Set-Status '已加密儲存目前 Codex 帳號。'
-                }
+                Backup-Current $cur $cur.Identity.Email
+                Refresh-Accounts
+                Set-Status '已加密儲存目前 Codex 帳號。'
             }
         }
     })
+
     $script:RosterPanel.Controls.Add($script:BtnRosterBackup)
 
     # 5. 底部戰情列
@@ -482,6 +467,7 @@ function Set-ViewMode([string]$Mode) {
     if (!$PreviewPath) { Set-UiPreference $pref }
 
     if ($Mode -eq 'Guild') {
+        $form.ClientSize = New-Object Drawing.Size(1140, 580)
         $tabs.Visible = $false
         $script:GuildPanel.Visible = $true
         $script:GuildPanel.BringToFront()
@@ -490,6 +476,7 @@ function Set-ViewMode([string]$Mode) {
         $script:LastGuildFingerprint = '' # 強制觸發首次渲染
         Update-GuildView
     } else {
+        $form.ClientSize = New-Object Drawing.Size(1320, 580)
         if ($script:MotionTimer) { $script:MotionTimer.Stop() }
         $script:GuildPanel.Visible = $false
         $tabs.Visible = $true
@@ -512,13 +499,13 @@ function Invoke-SmartRotation {
 
     if ($items.Count -le 1) { return }
 
-    $candidates = @($items | Where-Object { $_.SubItems[5].Text -ne '目前' })
+    $candidates = @($items | Where-Object { $_.SubItems[4].Text -ne '目前' })
     if (!$candidates.Count) { return }
 
     $best = $null
     $maxRemaining = -1
     foreach ($item in $candidates) {
-        $rem = Parse-PercentFromText $item.SubItems[3].Text
+        $rem = Parse-PercentFromText $item.SubItems[2].Text
         if ($null -ne $rem -and $rem -gt $maxRemaining) {
             $maxRemaining = $rem
             $best = $item
@@ -552,7 +539,7 @@ function Update-GuildView {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append("$($script:CurrentGuildProduct)|$($items.Count)|$($script:EnableSmartRotate)")
     foreach ($it in $items) {
-        [void]$sb.Append("||$($it.Text)|$($it.SubItems[1].Text)|$($it.SubItems[2].Text)|$($it.SubItems[3].Text)|$($it.SubItems[4].Text)|$($it.SubItems[5].Text)|$($it.SubItems[6].Text)")
+        [void]$sb.Append("||$($it.Text)|$($it.SubItems[0].Text)|$($it.SubItems[1].Text)|$($it.SubItems[2].Text)|$($it.SubItems[3].Text)|$($it.SubItems[4].Text)|$($it.SubItems[5].Text)")
     }
     $fingerprint = $sb.ToString()
     if ($fingerprint -eq $script:LastGuildFingerprint) {
@@ -574,17 +561,17 @@ function Update-GuildView {
     }
 
     # 尋找當前出戰主將 (使用中 == '目前')
-    $activeItem = $items | Where-Object { $_.SubItems[5].Text -eq '目前' } | Select-Object -First 1
-    $standbyItems = @($items | Where-Object { $_.SubItems[5].Text -ne '目前' })
+    $activeItem = $items | Where-Object { $_.SubItems[4].Text -eq '目前' } | Select-Object -First 1
+    $standbyItems = @($items | Where-Object { $_.SubItems[4].Text -ne '目前' })
 
     # 更新主將卡片
     if ($activeItem) {
         $script:VanguardName.Text = $activeItem.Text
-        $script:VanguardMeta.Text = "$($activeItem.SubItems[1].Text)  |  $($activeItem.SubItems[2].Text)"
+        $script:VanguardMeta.Text = $activeItem.SubItems[1].Text
         
-        $p1 = Parse-PercentFromText $activeItem.SubItems[3].Text
-        $p2 = Parse-PercentFromText $activeItem.SubItems[4].Text
-        $statusText = $activeItem.SubItems[6].Text
+        $p1 = Parse-PercentFromText $activeItem.SubItems[2].Text
+        $p2 = Parse-PercentFromText $activeItem.SubItems[3].Text
+        $statusText = $activeItem.SubItems[5].Text
 
         $pose = Get-HeroPose $p1 $statusText
         $script:CurrentVanguardPose = $pose
@@ -607,12 +594,12 @@ function Update-GuildView {
 
         # 5 小時進度條
         $label1 = if ($isAg) { '模型／5 小時額度' } else { '5 小時視窗用量' }
-        $script:VanguardBar1Lbl.Text = "${label1}: $($activeItem.SubItems[3].Text)"
+        $script:VanguardBar1Lbl.Text = "${label1}:`r`n$($activeItem.SubItems[2].Text)"
         $script:VanguardBar1.Value = if ($null -ne $p1) { [Math]::Max(0, [Math]::Min(100, [int]$p1)) } else { 0 }
 
         # 每週進度條
         $label2 = if ($isAg) { '每週額度' } else { '每週視窗用量' }
-        $script:VanguardBar2Lbl.Text = "${label2}: $($activeItem.SubItems[4].Text)"
+        $script:VanguardBar2Lbl.Text = "${label2}:`r`n$($activeItem.SubItems[3].Text)"
         $script:VanguardBar2.Value = if ($null -ne $p2) { [Math]::Max(0, [Math]::Min(100, [int]$p2)) } else { 0 }
     } else {
         $script:VanguardName.Text = '尚無出戰主將'
@@ -637,7 +624,7 @@ function Update-GuildView {
         $script:BtnVanguardRotate.Visible = $true
         $hasHealthyStandby = $false
         foreach ($sb in $standbyItems) {
-            $rem = Parse-PercentFromText $sb.SubItems[3].Text
+            $rem = Parse-PercentFromText $sb.SubItems[2].Text
             if ($null -ne $rem -and $rem -gt 0) { $hasHealthyStandby = $true; break }
         }
         $script:BtnVanguardRotate.Enabled = $hasHealthyStandby
@@ -652,7 +639,7 @@ function Update-GuildView {
 
     # 依 5 小時額度由高到低排序後備英雄
     $sortedStandby = @($standbyItems | Sort-Object {
-        $p = Parse-PercentFromText $_.SubItems[3].Text
+        $p = Parse-PercentFromText $_.SubItems[2].Text
         if ($null -ne $p) { $p } else { -1 }
     } -Descending)
 
@@ -697,7 +684,7 @@ function Update-GuildView {
             $newCardPanel.Controls.Add($cName)
 
             $cMeta = New-Object Windows.Forms.Label
-            $cMeta.SetBounds(68, 34, 380, 28)
+            $cMeta.SetBounds(68, 34, 395, 34)
             $cMeta.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
             $cMeta.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
             $newCardPanel.Controls.Add($cMeta)
@@ -743,13 +730,13 @@ function Update-GuildView {
             $card = $script:RosterCardControls[$i]
             $card.Panel.Top = 5 + ($i * 78)
 
-            $p1 = Parse-PercentFromText $item.SubItems[3].Text
-            $statusText = $item.SubItems[6].Text
+            $p1 = Parse-PercentFromText $item.SubItems[2].Text
+            $statusText = $item.SubItems[5].Text
             $pose = Get-HeroPose $p1 $statusText
             $card.Pose = $pose
 
-            $card.Name.Text = "$($item.Text)  ($($item.SubItems[2].Text))"
-            $card.Meta.Text = "$($item.SubItems[1].Text)  |  5h: $($item.SubItems[3].Text)  |  週: $($item.SubItems[4].Text)"
+            $card.Name.Text = "$($item.Text)  ($($item.SubItems[1].Text))"
+            $card.Meta.Text = "5h: $($item.SubItems[2].Text)  |  週: $($item.SubItems[3].Text)"
             $card.Button.Tag = [string]$item.Tag
 
             $avatarImg = Get-GuildHeroFrame $script:CurrentGuildProduct $pose $script:MotionFrame
@@ -765,8 +752,8 @@ function Update-GuildView {
     $totalHeroes = $items.Count
     $readyHeroes = 0; $tiredHeroes = 0; $exhaustedHeroes = 0
     foreach ($it in $items) {
-        $p = Parse-PercentFromText $it.SubItems[3].Text
-        $st = $it.SubItems[6].Text
+        $p = Parse-PercentFromText $it.SubItems[2].Text
+        $st = $it.SubItems[5].Text
         $ps = Get-HeroPose $p $st
         if ($ps -eq 'energetic') { $readyHeroes++ }
         elseif ($ps -eq 'tired') { $tiredHeroes++ }

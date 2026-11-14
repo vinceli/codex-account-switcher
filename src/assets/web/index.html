@@ -568,7 +568,7 @@
             <div class="card-header">
               <div>
                 <div class="account-name">${acc.name || '未具名帳號'}</div>
-                <div class="account-email">${acc.email || '—'}</div>
+                ${acc.email && acc.email !== acc.name ? `<div class="account-email">${acc.email}</div>` : ''}
               </div>
               <span class="plan-badge">${acc.plan || '—'}</span>
             </div>

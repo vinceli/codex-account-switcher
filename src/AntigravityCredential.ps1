@@ -95,20 +95,30 @@ namespace AntigravitySwitcher {
 function Get-AGIdentity([byte[]]$Bytes) {
     try {
         $auth = $script:Utf8.GetString($Bytes) | ConvertFrom-Json
-        if (!$auth.token -or !$auth.id_token -or !$auth.auth_method) { throw 'fields' }
-        $parts = ([string]$auth.id_token).Split('.')
-        if ($parts.Count -ne 3) { throw 'jwt' }
-        $payload = $parts[1].Replace('-', '+').Replace('_', '/')
-        $payload = $payload.PadRight($payload.Length + ((4 - $payload.Length % 4) % 4), '=')
-        $claims = $script:Utf8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
-        if (!$claims.sub -or !$claims.email) { throw 'identity' }
-        $email = ([string]$claims.email).Trim()
+        if (!$auth.token -or !$auth.auth_method) { throw 'fields' }
+        $subject = $null
+        if ($auth.id_token) {
+            $parts = ([string]$auth.id_token).Split('.')
+            if ($parts.Count -ne 3) { throw 'jwt' }
+            $payload = $parts[1].Replace('-', '+').Replace('_', '/')
+            $payload = $payload.PadRight($payload.Length + ((4 - $payload.Length % 4) % 4), '=')
+            $claims = $script:Utf8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
+            if (!$claims.sub -or !$claims.email) { throw 'identity' }
+            $subject = [string]$claims.sub
+            $email = ([string]$claims.email).Trim()
+        } else {
+            if ($auth.id_token_email -isnot [string] -or $auth.token.access_token -isnot [string] -or
+                [string]::IsNullOrWhiteSpace($auth.token.access_token)) { throw 'fields' }
+            $email = $auth.id_token_email.Trim()
+            if ($email -notmatch '^[^@\s]+@[^@\s]+$') { throw 'identity' }
+        }
         if (!$email) { throw 'identity' }
         $identity = 'email:' + $email.ToLowerInvariant()
         $sha = [Security.Cryptography.SHA256]::Create()
         try {
             $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($identity)))).Replace('-', '').ToLowerInvariant()
-            $legacyKey = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes([string]$claims.sub)))).Replace('-', '').ToLowerInvariant()
+            $legacyKey = $key
+            if ($subject) { $legacyKey = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($subject)))).Replace('-', '').ToLowerInvariant() }
         }
         finally { $sha.Dispose() }
         [pscustomobject]@{ Key=$key; LegacyKey=$legacyKey; Email=$email }
@@ -304,8 +314,7 @@ function Start-AGGuidedLogin {
         if ($done -ne 'OK') { throw '已取消新增帳號。' }
         $newCurrent = Read-AGCurrent
         if ($newCurrent.Identity.Key -eq $current.Identity.Key) { throw '登入帳號未變更，已取消新增。' }
-        $name = Prompt-AccountName $newCurrent.Identity.Email $newCurrent.Identity.Email
-        if (!$name) { $name = $newCurrent.Identity.Email }
+        $name = $newCurrent.Identity.Email
         Save-AGBackup $newCurrent $name ''
         Write-SwitcherLog 'INFO' 'Antigravity 新帳號已儲存' "Key=$($newCurrent.Identity.Key)"
         Set-Status '新帳號已加密儲存；請在 Antigravity Account 頁確認登入狀態。'
@@ -338,11 +347,14 @@ function Invoke-AGSelfTest {
     try {
         Initialize-AGCredential
         function Check-AG([bool]$Condition, [string]$Message) { if (!$Condition) { throw ('Antigravity 測試失敗：' + $Message) } }
-        function Fake-AG([string]$Id, [string]$Token) {
+        function Fake-AG([string]$Id, [string]$Token, [switch]$EmailOnly) {
             $claims = @{ sub=$Id; email=($Id + '@example.invalid') } | ConvertTo-Json -Compress
             $jwt = 'test.' + [Convert]::ToBase64String($script:Utf8.GetBytes($claims)).TrimEnd('=').Replace('+','-').Replace('/','_') + '.test'
             $entry = New-Object AntigravitySwitcher.CredentialEntry
-            $entry.Blob = $script:Utf8.GetBytes((@{ token=@{ access_token=$Token; refresh_token=('refresh-' + $Token) }; auth_method='oauth'; id_token=$jwt } | ConvertTo-Json -Depth 4 -Compress))
+            $auth = @{ token=@{ access_token=$Token; refresh_token=('refresh-' + $Token) }; auth_method='oauth' }
+            if ($EmailOnly) { $auth.id_token_email = $Id + '@example.invalid' }
+            else { $auth.id_token = $jwt }
+            $entry.Blob = $script:Utf8.GetBytes(($auth | ConvertTo-Json -Depth 4 -Compress))
             $entry.UserName = 'antigravity'
             $entry.Persist = 2
             return $entry
@@ -355,8 +367,14 @@ function Invoke-AGSelfTest {
             $preserved[$path] = $value
         }
         $a = Fake-AG 'A' 'old-A'
-        $updated = Fake-AG 'A' 'new-A'
+        $updated = Fake-AG 'a' 'new-A' -EmailOnly
         $b = Fake-AG 'B' 'token-B'
+        $oldIdentity = Get-AGIdentity $a.Blob
+        $newIdentity = Get-AGIdentity $updated.Blob
+        Check-AG ($oldIdentity.Key -eq $newIdentity.Key -and $newIdentity.LegacyKey -eq $newIdentity.Key) '新舊登入格式沿用相同的電子郵件識別，無 subject 時只接受目前識別'
+        $spaced = $script:Utf8.GetString($updated.Blob) | ConvertFrom-Json
+        $spaced.id_token_email = ' A@EXAMPLE.invalid '
+        Check-AG ((Get-AGIdentity $script:Utf8.GetBytes(($spaced | ConvertTo-Json -Depth 4 -Compress))).Key -eq $oldIdentity.Key) '新版電子郵件去除前後空白且不區分大小寫'
         [AntigravitySwitcher.Credentials]::Write($script:AGCredentialTarget, $a)
         $current = Read-AGCurrent
         Check-AG ($current.Identity.Email -eq 'A@example.invalid') '讀取 Windows 認證管理員與 ID Token 身分'
@@ -370,8 +388,24 @@ function Invoke-AGSelfTest {
         Check-AG ([Convert]::ToBase64String((Read-AGBackup $aPath).Entry.Blob) -eq [Convert]::ToBase64String($updated.Blob)) '切換前保存最新 Token'
         $rollback = Read-AGBackup (Join-Path $script:AGStorePath 'last-switch.rollback')
         Install-AGCredential $rollback.Entry
-        Check-AG ((Read-AGCurrent).Identity.Email -eq 'A@example.invalid') '還原原帳號'
+        Check-AG ((Read-AGCurrent).Identity.Email -eq 'a@example.invalid') '還原新版登入格式的原帳號'
         $before = [Convert]::ToBase64String((Read-AGCurrent).Entry.Blob)
+        foreach ($invalid in @(
+            '{}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth"}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth","id_token_email":" "}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth","id_token_email":"invalid"}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth","id_token_email":42}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth","id_token_email":{}}',
+            '{"token":{},"auth_method":"oauth","id_token_email":"a@example.invalid"}',
+            '{"token":{"access_token":" "},"auth_method":"oauth","id_token_email":"a@example.invalid"}',
+            '{"token":{"access_token":"synthetic"},"id_token_email":"a@example.invalid"}',
+            '{"token":{"access_token":"synthetic"},"auth_method":"oauth","id_token":"broken","id_token_email":"a@example.invalid"}'
+        )) {
+            $rejected = $false
+            try { Get-AGIdentity $script:Utf8.GetBytes($invalid) | Out-Null } catch { $rejected = $true }
+            Check-AG $rejected '缺少必要欄位或損壞的登入資料仍被拒絕，不以電子郵件略過損壞 JWT'
+        }
         $bad = New-Object AntigravitySwitcher.CredentialEntry
         $bad.Blob = $script:Utf8.GetBytes('{}')
         $bad.UserName = 'antigravity'; $bad.Persist = 2
@@ -382,7 +416,7 @@ function Invoke-AGSelfTest {
         Check-AG ($null -eq (Get-AGCurrentOrNull)) '測試認證清除'
         $savedA = Read-AGBackup $aPath
         Install-AGCredential $savedA.Entry
-        Check-AG ((Read-AGCurrent).Identity.Email -eq 'A@example.invalid') '未登入狀態可恢復備份'
+        Check-AG ((Read-AGCurrent).Identity.Email -eq 'a@example.invalid') '未登入狀態可恢復新版格式備份'
         foreach ($path in $preserved.Keys) {
             Check-AG ([IO.File]::Exists($path) -and [IO.File]::ReadAllText($path) -ceq $preserved[$path]) '工作區及對話資料保持原文'
         }

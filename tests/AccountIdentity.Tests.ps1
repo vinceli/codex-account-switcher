@@ -96,12 +96,13 @@ try {
     Write-Atomic $script:AuthPath $current
     Refresh-Accounts
     Check ($list.Items.Count -eq 1 -and $script:CodexRequests.Count -eq 1) '傳統清單與額度每個帳號只有一筆'
-    Check ($list.Items[0].SubItems[5].Text -eq '目前') '登入身分改變仍正確標記目前帳號'
+    Check ($list.Items[0].Text -eq (Get-Identity $current).Email -and $list.Items[0].SubItems.Count -eq 7) 'Codex 清單只顯示帳號，不重複顯示備份名稱'
+    Check ($list.Items[0].SubItems[4].Text -eq '目前') '登入身分改變仍正確標記目前帳號'
     Check ([Convert]::ToBase64String($script:CodexRequests[0].Bytes) -eq [Convert]::ToBase64String($current)) '目前帳號查詢使用即時登入憑證'
     Check ($script:WebSnapshot.Accounts.Count -eq 1 -and $script:WebSnapshot.Accounts[0].Key -eq $script:WebSnapshot.HostKey) 'Web 清單與主機鎖定共用唯一識別'
     $list.Items.Clear()
     Sync-WebDashboardAccounts
-    Check ($script:WebSnapshot.Accounts.Count -eq 1 -and $script:WebSnapshot.Accounts[0].Name -eq '最新名稱') 'Web 無 UI 清單時仍取得唯一且最新帳號'
+    Check ($script:WebSnapshot.Accounts.Count -eq 1 -and $script:WebSnapshot.Accounts[0].Name -eq (Get-Identity $current).Email) 'Web 無 UI 清單時仍取得唯一且最新帳號'
 
     Backup-Current (Read-Current) ''
     $canonicalPath = Join-Path $script:StorePath ((Get-Identity $current).Key + '.bin')
@@ -137,7 +138,8 @@ try {
     function Read-AGCurrent { return $script:FakeAGCurrent }
     $script:AGRequests = @()
     Refresh-AGAccounts
-    Check ($agList.Items.Count -eq 1 -and $script:AGRequests.Count -eq 1 -and $agList.Items[0].SubItems[5].Text -eq '目前') 'Antigravity 清單、額度與目前帳號一致'
+    Check ($agList.Items[0].Text -eq (Get-AGIdentity $agLatest).Email -and $agList.Items[0].SubItems.Count -eq 7) 'Antigravity 清單只顯示帳號，不重複顯示備份名稱'
+    Check ($agList.Items.Count -eq 1 -and $script:AGRequests.Count -eq 1 -and $agList.Items[0].SubItems[4].Text -eq '目前') 'Antigravity 清單、額度與目前帳號一致'
     Backup-AGCurrent $script:FakeAGCurrent ''
     Save-AGBackup $script:FakeAGCurrent 'AG 更新' ''
     Check ((@(Get-AccountBackups -Antigravity)).Count -eq 1 -and (Get-AccountBackups -Antigravity).Name -eq 'AG 更新') 'Antigravity 儲存只更新唯一帳號'

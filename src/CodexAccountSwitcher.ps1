@@ -530,9 +530,7 @@ function Start-GuidedLogin {
         return
     }
 
-    $defaultName = $newCurrent.Identity.Email
-    $customName = Prompt-AccountName $defaultName $newCurrent.Identity.Email
-    if (!$customName) { $customName = $defaultName }
+    $customName = $newCurrent.Identity.Email
 
     Backup-Current $newCurrent $customName
     Write-SwitcherLog 'INFO' '引導登入帳號儲存完成' "Name=$customName, Email=$($newCurrent.Identity.Email), Key=$($newCurrent.Identity.Key)"
@@ -615,7 +613,7 @@ function Format-QuotaWindow($Window, [DateTimeOffset]$ReceivedAt, [switch]$IsPri
     $used = 0.0
     if ($null -ne $Window.used_percent -and [double]::TryParse([string]$Window.used_percent, [ref]$used) -and
         ![double]::IsNaN($used) -and ![double]::IsInfinity($used)) {
-        $remainingValue = [Math]::Round([Math]::Max(0, [Math]::Min(100, 100 - $used)), 1)
+        $remainingValue = [Math]::Round([Math]::Max(0.0, [Math]::Min(100.0, 100.0 - $used)), 1)
         $remaining = "$remainingValue%"
     }
     $reset = $null
@@ -732,13 +730,13 @@ function Update-QuotaResults {
             if ($job.Generation -ne $script:QuotaGeneration -or !$list.Items.ContainsKey($job.Key)) { continue }
             $quota = ConvertFrom-QuotaReply ($job.Task.GetAwaiter().GetResult())
             $item = $list.Items[$job.Key]
-            $item.SubItems[2].Text = $quota.Plan
-            $item.SubItems[3].Text = $quota.Primary
-            $item.SubItems[4].Text = $quota.Secondary
+            $item.SubItems[1].Text = $quota.Plan
+            $item.SubItems[2].Text = $quota.Primary
+            $item.SubItems[3].Text = $quota.Secondary
             $item.UseItemStyleForSubItems = $false
-            $item.SubItems[3].ForeColor = Get-QuotaColor $quota.PrimaryRemaining
-            $item.SubItems[4].ForeColor = Get-QuotaColor $quota.SecondaryRemaining
-            $item.SubItems[6].Text = $quota.Status
+            $item.SubItems[2].ForeColor = Get-QuotaColor $quota.PrimaryRemaining
+            $item.SubItems[3].ForeColor = Get-QuotaColor $quota.SecondaryRemaining
+            $item.SubItems[5].Text = $quota.Status
             $item.ToolTipText = $quota.Detail
             $changed = $true
         } finally {
@@ -902,7 +900,7 @@ if ($appIcon) {
     })
 }
 $form.Text = 'Codex / Antigravity 帳號切換工具'
-$form.ClientSize = New-Object Drawing.Size(1140, 580)
+$form.ClientSize = New-Object Drawing.Size(1320, 580)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -910,7 +908,7 @@ $form.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 10)
 $form.BackColor = [Drawing.Color]::FromArgb(247,248,250)
 $form.AutoScaleMode = 'Dpi'
 $tabs = New-Object Windows.Forms.TabControl
-$tabs.SetBounds(5, 5, 1130, 565)
+$tabs.SetBounds(5, 5, 1310, 565)
 $codexTab = New-Object Windows.Forms.TabPage
 $codexTab.Text = 'Codex'
 $agTab = New-Object Windows.Forms.TabPage
@@ -971,13 +969,11 @@ function Refresh-Accounts {
         $current = Read-Current
         $currentKey = $current.Identity.Key
         $currentLabel.Text = '登入檔帳號：' + $current.Identity.Email
-        $nameBox.Text = $current.Identity.Email
     } catch { $currentLabel.Text = '登入檔狀態：' + $_.Exception.Message }
     $bad=0
     foreach ($record in @(Get-AccountBackups -BadCount ([ref]$bad))) {
         try {
-            $item = New-Object Windows.Forms.ListViewItem($record.Name)
-            [void]$item.SubItems.Add($record.Email)
+            $item = New-Object Windows.Forms.ListViewItem($record.Email)
             foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
             [void]$item.SubItems.Add($(if ($record.Key -eq $currentKey) { '目前' } else { '' }))
             [void]$item.SubItems.Add('查詢中…')
@@ -1016,8 +1012,8 @@ function Sync-WebDashboardAccounts {
     if ($list -and $list.Items.Count -gt 0) {
         foreach ($item in $list.Items) {
             try {
-                $p1Text = [string]$item.SubItems[3].Text
-                $p2Text = [string]$item.SubItems[4].Text
+                $p1Text = [string]$item.SubItems[2].Text
+                $p2Text = [string]$item.SubItems[3].Text
                 $p1Val = -1
                 $p2Val = -1
                 if ($p1Text -match '([0-9]+(?:\.[0-9]+)?)%') { $p1Val = [double]$matches[1] }
@@ -1030,13 +1026,13 @@ function Sync-WebDashboardAccounts {
                     $credBytes = $rec.Bytes
                 }
 
-                $savedText = if ($item.SubItems.Count -gt 7) { [string]$item.SubItems[7].Text } else { '—' }
+                $savedText = if ($item.SubItems.Count -gt 6) { [string]$item.SubItems[6].Text } else { '—' }
 
                 $accounts += [pscustomobject]@{
                     Key = [string]$item.Name
                     Name = [string]$item.Text
-                    Email = [string]$item.SubItems[1].Text
-                    Plan = [string]$item.SubItems[2].Text
+                    Email = [string]$item.SubItems[0].Text
+                    Plan = [string]$item.SubItems[1].Text
                     Primary = $p1Text
                     Secondary = $p2Text
                     PrimaryRemaining = $p1Val
@@ -1051,7 +1047,7 @@ function Sync-WebDashboardAccounts {
             try {
                 $accounts += [pscustomobject]@{
                     Key = $rec.Key
-                    Name = $rec.Name
+                    Name = $rec.Email
                     Email = $rec.Email
                     Plan = '—'
                     Primary = '未知'
@@ -1079,13 +1075,11 @@ function Refresh-AGAccounts {
         $current = Read-AGCurrent
         $currentKey = $current.Identity.Key
         $agCurrentLabel.Text = '目前登入：' + $current.Identity.Email
-        $agNameBox.Text = $current.Identity.Email
     } catch { $agCurrentLabel.Text = '登入狀態：' + $_.Exception.Message }
     $bad = 0
     foreach ($record in @(Get-AccountBackups -Antigravity -BadCount ([ref]$bad))) {
         try {
-            $item = New-Object Windows.Forms.ListViewItem($record.Name)
-            [void]$item.SubItems.Add($record.Email)
+            $item = New-Object Windows.Forms.ListViewItem($record.Email)
             foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
             [void]$item.SubItems.Add($(if ($record.Key -eq $currentKey) { '目前' } else { '' }))
             [void]$item.SubItems.Add('查詢中…')
@@ -1103,27 +1097,24 @@ function Refresh-AGAccounts {
 
 $title=New-Label 'Codex 帳號切換' 24 18 520 34
 $title.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 17, [Drawing.FontStyle]::Bold)
-$viewLog=New-Button '查看日誌 (Log)' 934 16 158 {
+$viewLog=New-Button '查看日誌 (Log)' 1114 16 158 {
     if (!(Test-Path -LiteralPath $script:LogPath)) {
         Write-SwitcherLog 'INFO' '切換工具日誌初始化'
     }
     Start-Process notepad.exe -ArgumentList "`"$script:LogPath`""
 }
 $currentLabel=New-Label '正在讀取登入檔…' 26 62 1066 44
-$null=New-Label '帳號名稱' 26 112 90 28
-$nameBox=New-Object Windows.Forms.TextBox
-$nameBox.SetBounds(120,109,770,30); $nameBox.MaxLength=80; $codexTab.Controls.Add($nameBox)
-$save=New-Button '儲存目前帳號' 908 106 184 {
+$save=New-Button '儲存目前帳號' 1088 62 184 {
     Invoke-Action {
         $current=Read-Current
-        Backup-Current $current $nameBox.Text
+        Backup-Current $current $current.Identity.Email
         Refresh-Accounts
         Set-Status '已加密儲存目前帳號。之後使用本工具切換，不要先在 Codex 按登出。'
     }
 }
 $list=New-Object Windows.Forms.ListView
-$list.SetBounds(26,158,1066,206); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
-foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$list.Columns.Add($column[0],$column[1]) }
+$list.SetBounds(26,118,1246,246); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
+foreach ($column in @(@('帳號',270),@('方案',70),@('5 小時用量／重置',230),@('週用量／重置',230),@('使用中',60),@('查詢狀態',115),@('備份時間',160))) { [void]$list.Columns.Add($column[0],$column[1]) }
 $codexTab.Controls.Add($list)
 $switch=New-Button '切換並重新啟動' 26 380 160 {
     Invoke-Action {
@@ -1145,8 +1136,8 @@ $restore=New-Button '還原上次切換' 366 380 150 {
         Refresh-Accounts
     }
 }
-$refresh=New-Button '重新整理帳號與額度' 906 380 186 { Invoke-Action { Refresh-Accounts } }
-$lastQueryLabel=New-Label '最後查詢：尚未查詢' 842 422 250 24
+$refresh=New-Button '重新整理帳號與額度' 1086 380 186 { Invoke-Action { Refresh-Accounts } }
+$lastQueryLabel=New-Label '最後查詢：尚未查詢' 1022 422 250 24
 $lastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
 $lastQueryLabel.TextAlign='MiddleCenter'
 $lastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
@@ -1158,19 +1149,16 @@ $script:CurrentPage = $agTab
 $agTitle = New-Label 'Antigravity 帳號切換' 24 18 520 34
 $agTitle.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 17, [Drawing.FontStyle]::Bold)
 $agCurrentLabel = New-Label '正在讀取登入資料…' 26 62 1066 44
-$null = New-Label '帳號名稱' 26 112 90 28
-$agNameBox = New-Object Windows.Forms.TextBox
-$agNameBox.SetBounds(120,109,770,30); $agNameBox.MaxLength=80; $agTab.Controls.Add($agNameBox)
-$agSave = New-Button '儲存目前帳號' 908 106 184 {
+$agSave = New-Button '儲存目前帳號' 1088 62 184 {
     Invoke-Action {
         $current = Read-AGCurrent
-        Save-AGBackup $current $agNameBox.Text ''
+        Save-AGBackup $current $current.Identity.Email ''
         Set-Status '已加密儲存 Antigravity 認證。'
     } { Refresh-AGAccounts }
 }
 $agList = New-Object Windows.Forms.ListView
-$agList.SetBounds(26,158,1066,206); $agList.View='Details'; $agList.FullRowSelect=$true; $agList.MultiSelect=$false; $agList.HideSelection=$false; $agList.ShowItemToolTips=$true
-foreach ($column in @(@('名稱',100),@('帳號',200),@('方案',70),@('模型／5 小時用量',185),@('週用量',185),@('使用中',60),@('查詢狀態',105),@('備份時間',140))) { [void]$agList.Columns.Add($column[0],$column[1]) }
+$agList.SetBounds(26,118,1246,246); $agList.View='Details'; $agList.FullRowSelect=$true; $agList.MultiSelect=$false; $agList.HideSelection=$false; $agList.ShowItemToolTips=$true
+foreach ($column in @(@('帳號',180),@('方案',55),@('模型／5 小時額度與重置',350),@('每週額度與重置',320),@('使用中',60),@('查詢狀態',120),@('備份時間',140))) { [void]$agList.Columns.Add($column[0],$column[1]) }
 $agTab.Controls.Add($agList)
 $agSwitch = New-Button '切換並重新啟動' 26 380 160 {
     Invoke-Action {
@@ -1188,18 +1176,18 @@ $agRestore = New-Button '還原上次切換' 366 380 150 {
 $agLogin = New-Button '引導登入新帳號' 196 380 160 {
     Invoke-Action { Start-AGGuidedLogin } { Refresh-AGAccounts }
 }
-$agRefresh = New-Button '重新整理帳號與額度' 906 380 186 { Invoke-Action { Refresh-AGAccounts } { Refresh-AGAccounts } }
-$agLastQueryLabel=New-Label '最後查詢：尚未查詢' 842 422 250 24
+$agRefresh = New-Button '重新整理帳號與額度' 1086 380 186 { Invoke-Action { Refresh-AGAccounts } { Refresh-AGAccounts } }
+$agLastQueryLabel=New-Label '最後查詢：尚未查詢' 1022 422 250 24
 $agLastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
 $agLastQueryLabel.TextAlign='MiddleCenter'
 $agLastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
-$agLog = New-Button '查看日誌 (Log)' 934 16 158 {
+$agLog = New-Button '查看日誌 (Log)' 1114 16 158 {
     if (!(Test-Path -LiteralPath $script:LogPath)) { Write-SwitcherLog 'INFO' '切換工具日誌初始化' }
     Start-Process notepad.exe -ArgumentList "`"$script:LogPath`""
 }
 $agStatus = New-Label '只切換 Antigravity 認證；保留工作區、對話及設定。' 26 430 1066 40
 $agStatus.ForeColor = [Drawing.Color]::FromArgb(45,75,90)
-$agNote = New-Label 'G：Gemini、C：Claude/GPT；G* 為模型額度（回應未標示週期）。未提供的週額度不估算；滑鼠停留可查看明細。' 26 480 1066 42
+$agNote = New-Label 'G：Gemini、C：Claude/GPT、A：Argon；* 為模型額度（週期未標示）。括號為重置時間／剩餘天數；未提供的額度不估算。' 26 480 1066 42
 $agNote.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8)
 $script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog,$agSave,$agSwitch,$agRestore,$agLogin,$agRefresh,$agLog)
 if ($IsolatedAntigravityTestPath) {
@@ -1454,23 +1442,21 @@ $form.Add_FormClosing({ $quotaTimer.Stop(); Stop-QuotaQueries; Stop-AGQuotaQueri
 try {
     if ($PreviewPath) {
         $currentLabel.Text='登入檔帳號：account-a@example.invalid'
-        $nameBox.Text='工作帳號'
-        $item=New-Object Windows.Forms.ListViewItem('工作帳號')
-        foreach ($value in @('account-a@example.invalid','plus','78% (15:08)','84% (6.8d)','目前','已更新','2026-09-17 12:00')) { [void]$item.SubItems.Add($value) }
+        $item=New-Object Windows.Forms.ListViewItem('account-a@example.invalid')
+        foreach ($value in @('plus','78% (15:08)','84% (6.8d)','目前','已更新','2026-09-17 12:00')) { [void]$item.SubItems.Add($value) }
         $item.UseItemStyleForSubItems=$false
-        $item.SubItems[3].ForeColor=Get-QuotaColor 78
-        $item.SubItems[4].ForeColor=Get-QuotaColor 84
+        $item.SubItems[2].ForeColor=Get-QuotaColor 78
+        $item.SubItems[3].ForeColor=Get-QuotaColor 84
         [void]$list.Items.Add($item)
-        $item=New-Object Windows.Forms.ListViewItem('備用帳號')
-        foreach ($value in @('account-b@example.invalid','—','未知','未知','','需重新授權','2026-09-16 09:00')) { [void]$item.SubItems.Add($value) }
+        $item=New-Object Windows.Forms.ListViewItem('account-b@example.invalid')
+        foreach ($value in @('—','未知','未知','','需重新授權','2026-09-16 09:00')) { [void]$item.SubItems.Add($value) }
         [void]$list.Items.Add($item)
         $agCurrentLabel.Text = '目前登入：account-b@example.invalid'
-        $agNameBox.Text = '備用帳號'
-        $agItem = New-Object Windows.Forms.ListViewItem('備用帳號')
-        foreach ($value in @('account-b@example.invalid','Pro','G 86% / C 100%','G 48% / C 1%','目前','已更新','2026-09-24 12:00')) { [void]$agItem.SubItems.Add($value) }
+        $agItem = New-Object Windows.Forms.ListViewItem('account-b@example.invalid')
+        foreach ($value in @('Pro','G 86% (21:40) / C 100% (22:10) / A 僅每週','G 48% (1.1d) / C 1% (2.5d) / A 95% (6.9d)','目前','已更新','2026-09-24 12:00')) { [void]$agItem.SubItems.Add($value) }
         $agItem.UseItemStyleForSubItems=$false
-        $agItem.SubItems[3].ForeColor=Get-QuotaColor 86
-        $agItem.SubItems[4].ForeColor=Get-QuotaColor 1
+        $agItem.SubItems[2].ForeColor=Get-QuotaColor 86
+        $agItem.SubItems[3].ForeColor=Get-QuotaColor 1
         [void]$agList.Items.Add($agItem)
         $form.Show(); $form.Refresh()
         $bitmap=New-Object Drawing.Bitmap($form.Width,$form.Height)

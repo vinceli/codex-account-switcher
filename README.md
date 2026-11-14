@@ -23,7 +23,7 @@
    - 提供綠色免安裝發行包（`Portable.zip`，內建一鍵捷徑建立與標準解除安裝腳本）。
 6. **非同步額度查詢**：
    - Codex 分頁顯示每個已儲存帳號的方案、實際窗口週期、剩餘比例及重置倒數；連線失敗不妨礙本機切換。
-   - Antigravity 分頁顯示每個已儲存帳號的 Gemini、Claude/GPT 五小時及每週剩餘比例與方案；過期的存取權杖只在記憶體中刷新，不改寫登入項目或備份。
+   - Antigravity 分頁顯示 Gemini、Claude/GPT、Argon 三種額度及各自的重置時間；兩分頁均只顯示帳號，不重複顯示名稱。過期的存取權杖只在記憶體中刷新，不改寫登入項目或備份。
 7. **雙風格介面：傳統清單 vs 冒險者公會戰情室 (Guild Cockpit View)**：
    - **傳統清單模式**：高資訊密度、經典 Windows 表格、支援右鍵選單快速切換與管理。
    - **公會戰情室模式**：視覺化桌面儀表板，將各帳號具象化為英雄幹員（Codex 符文騎士、Antigravity 星軌工匠等），具備精力充沛/疲憊/竭盡等動態像素立繪。
@@ -104,7 +104,7 @@
 
 #### 1. 儲存目前第一個帳號
 1. 確認 OpenAI Codex Desktop 已正常登入帳號 A。
-2. 開啟「Codex 帳號切換」工具，輸入自訂名稱（例如：`工作帳號`），點擊「**儲存目前帳號**」。
+2. 開啟「Codex 帳號切換」工具，點擊「**儲存目前帳號**」。工具直接以電子郵件識別帳號，不需另取名稱。
 
 #### 2. 新增或授權第二個帳號（關鍵步驟）
 1. 直接在工具內點擊「**引導登入新帳號**」。
@@ -146,9 +146,11 @@
 2. 點「引導登入新帳號」：工具先備份目前認證，關閉 Antigravity，清除本機登入項目，再啟動官方登入畫面。請在瀏覽器登入另一帳號，返回工具確認後會自動儲存。不要在 Antigravity 按 Sign Out；取消或未偵測到新帳號時，工具會嘗試還原原認證。
 3. 從清單選取帳號後按「切換並重新啟動」。工具會要求先結束執行中任務，關閉桌面版並自動終止殘留語言服務與子程序，確認全部結束後只替換 `gemini:antigravity` 認證項目並重新啟動。完成後請在 Account 頁確認實際登入；失敗時可按「還原上次切換」。
 
-Antigravity 分頁的「模型／5 小時用量」與「週用量」欄以 `G` 表示 Gemini、`C` 表示 Claude/GPT。摘要未提供 Gemini 時，改以 `G*` 顯示可用 Gemini 語言模型的最低剩餘比例；模型回應未標明週期，因此不視為固定五小時額度，也不推算每週額度。滑鼠停留帳號列可查看各模型的剩餘比例與重置時間；未提供的週額度明示「未提供」，查詢狀態為「已更新／部分額度」。完整摘要維持四個視窗的顯示與每週歸零保護，按鈕下方顯示本輪查詢完成時間。
+登入資料同時支援舊版 `id_token` 與本機 Antigravity 2.28.2 觀察到的 `id_token_email` 格式；兩者沿用相同的電子郵件帳號識別，既有加密備份仍可使用。若舊版切換器顯示「登入資料格式不支援或已損壞」，請更新切換器後重新開啟。
 
-額度直接使用帳號的存取權杖向 Google `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` 查詢；方案使用 `loadCodeAssist`。請求的 `User-Agent` 自動帶入已安裝 `Antigravity.exe` 的檔案版本（`antigravity/<版本>`）；僅送 `antigravity` 可能使服務省略 Gemini 五小時及每週摘要。缺少 Gemini 摘要時，額外呼叫同一主機的 `fetchAvailableModels`，只使用明確回傳的 `quotaInfo.remainingFraction`，不將缺漏資料補為 100%。過期時使用備份內的刷新權杖與已安裝 Antigravity 程式中的 OAuth 用戶端設定，在記憶體中取得新存取權杖。此流程不需 CLI，也不修改備份或目前登入。這些是 Antigravity 內部端點與程式設定，版本更新後可能改變；查詢失敗會顯示狀態，不影響切換。四個真實備份帳號已驗證 Gemini 與 Claude/GPT 的五小時及每週額度。兩個真實帳號也已驗證免瀏覽器重登切換與引導登入，工作區及對話仍保留。
+Antigravity 分頁以 `G` 表示 Gemini、`C` 表示 Claude/GPT、`A` 表示 Argon，三組額度分開計算。五小時／模型欄顯示 `比例 (重置時間)`，每週欄依 Codex 相同規則顯示重置時間或剩餘天數；滑鼠停留可查看完整本地時間。摘要優先；缺少摘要時取該組模型的最低剩餘比例，並使用同一模型的重置時間，以 `G*`、`C*`、`A*` 標示來源。模型回應未標明週期，不宣稱為固定五小時額度，也不推算每週額度。Argon 摘要使用 `gemini-argon-wtu-weekly`，屬獨立每週額度，顯示於每週欄；五小時欄標示「A 僅每週」，不把同一週額度再當成五小時額度。缺漏顯示「未提供」，查詢狀態為「已更新／部分額度」；各組保留每週歸零保護。倒數為查詢時快照，重新整理可更新。
+
+額度直接使用帳號的存取權杖向 Google `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` 查詢；方案使用 `loadCodeAssist`。請求的 `User-Agent` 使用桌面版 `hub` 識別，帶入已安裝 `Antigravity.exe` 的檔案版本及 Windows 架構（`antigravity/hub/<版本> windows/<架構>`）；本機對照實查確認，缺少 `hub` 會使服務省略 Argon。每次額外呼叫同一主機的 `fetchAvailableModels` 以偵測 Argon；即使 Gemini／Claude 摘要完整也不略過。Argon 模型與一般 Gemini 隔離，只採明確回傳且介於 0 至 1 的 `quotaInfo.remainingFraction` 與對應 `resetTime`，不將缺漏資料補為 100%。過期時使用備份內的刷新權杖與已安裝 Antigravity 程式中的 OAuth 用戶端設定，在記憶體中取得新存取權杖。此流程不需 CLI，也不修改備份或目前登入。這些是 Antigravity 內部端點與程式設定，版本更新後可能改變；查詢失敗會顯示狀態，不影響切換。四個真實備份帳號已驗證 Gemini 與 Claude/GPT 的五小時及每週額度；改用 `hub` 識別後，其中三個帳號已取得真實 Argon 每週比例及重置時間，另一帳號未回傳。兩個真實帳號也已驗證免瀏覽器重登切換與引導登入，工作區及對話仍保留。
 
 新版首次啟動會驗證 `%LOCALAPPDATA%\CodexAccountSwitcher` 的舊版 Codex 加密備份，將尚未存在的帳號複製到 `%LOCALAPPDATA%\CodexAntigravitySwitcher`。舊版原件保留；若新版已有同一帳號的備份，不覆寫新版資料。桌面與開始功能表捷徑使用舊版相同的金鑰圖示。
 
