@@ -138,7 +138,7 @@ namespace CodexAccountSwitcherInstaller
                     if (key != null)
                     {
                         key.SetValue("DisplayName", "Codex 與 Antigravity 帳號切換工具");
-                        key.SetValue("DisplayVersion", "1.2.0");
+                        key.SetValue("DisplayVersion", "1.3.2");
                         key.SetValue("Publisher", "Codex Tools");
                         key.SetValue("InstallLocation", destDir);
                         key.SetValue("UninstallString", "\"" + Path.Combine(destDir, "Uninstall.bat") + "\"");

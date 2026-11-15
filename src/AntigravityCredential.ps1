@@ -170,12 +170,16 @@ function Save-AGBackup([object]$Current, [string]$Name, [string]$Path) {
     Write-Atomic $Path $cipher
     $verified = Read-AGBackup $Path
     if ([Convert]::ToBase64String($Current.Entry.Blob) -ne [Convert]::ToBase64String($verified.Entry.Blob)) { throw 'Antigravity 備份驗證失敗。' }
+    if ([IO.Path]::GetFullPath($Path) -ieq (Join-Path $script:AGStorePath ($identity.Key + '.bin'))) {
+        [IO.File]::Delete((Join-Path $script:AGStorePath ($identity.Key + '.deleted')))
+    }
     Write-SwitcherLog 'INFO' '儲存 Antigravity 備份' "Key=$($identity.Key), Path=$Path"
 }
 
 function Backup-AGCurrent([object]$Current, [string]$Name) {
     $path = Join-Path $script:AGStorePath ($Current.Identity.Key + '.bin')
     if (!$Name) {
+        if (Test-Path -LiteralPath (Join-Path $script:AGStorePath ($Current.Identity.Key + '.deleted'))) { return }
         $existing = Get-AccountBackups -Antigravity | Where-Object { $_.Key -eq $Current.Identity.Key }
         $Name = if ($existing) { $existing.Name } else { '自動備份 ' + $Current.Identity.Email }
     }

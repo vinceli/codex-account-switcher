@@ -411,6 +411,28 @@ function Initialize-GuildView {
     })
 
     $script:RosterPanel.Controls.Add($script:BtnRosterBackup)
+
+    $script:BtnGuildApiKey = New-Object Windows.Forms.Button
+    $script:BtnGuildApiKey.Text = '新增 API key'
+    $script:BtnGuildApiKey.SetBounds(305, 432, 150, 36)
+    $script:BtnGuildApiKey.FlatStyle = 'Flat'
+    $script:BtnGuildApiKey.ForeColor = [Drawing.Color]::FromArgb(243, 196, 91)
+    $script:BtnGuildApiKey.Add_Click({
+        Invoke-Action { Show-CodexApiKeyDialog } { Refresh-Accounts; Update-GuildView }
+    })
+    $script:RosterPanel.Controls.Add($script:BtnGuildApiKey)
+
+    $btnManageAccounts = New-Object Windows.Forms.Button
+    $btnManageAccounts.Text = '管理／刪除帳號'
+    $btnManageAccounts.SetBounds(465, 432, 175, 36)
+    $btnManageAccounts.FlatStyle = 'Flat'
+    $btnManageAccounts.ForeColor = [Drawing.Color]::FromArgb(243, 196, 91)
+    $btnManageAccounts.Add_Click({
+        $tabs.SelectedTab = if ($script:CurrentGuildProduct -eq 'Antigravity') { $agTab } else { $codexTab }
+        Set-ViewMode 'Classic'
+    })
+    $script:RosterPanel.Controls.Add($btnManageAccounts)
+    $script:Buttons += @($script:BtnGuildApiKey,$btnManageAccounts)
 
     # 5. 底部戰情列
     $script:GuildStatusBar = New-Object Windows.Forms.Label
@@ -494,8 +516,7 @@ function Parse-PercentFromText([string]$Text) {
 
 function Invoke-SmartRotation {
     $isAg = ($script:CurrentGuildProduct -eq 'Antigravity')
-    $sourceList = if ($isAg) { $agList } else { $list }
-    $items = @($sourceList.Items)
+    $items = if ($isAg) { @($agList.Items) } else { @(Get-CodexAccountItems) }
 
     if ($items.Count -le 1) { return }
 
@@ -529,11 +550,11 @@ function Invoke-SmartRotation {
 }
 
 function Update-GuildView {
+    $script:BtnGuildApiKey.Visible = ($script:CurrentGuildProduct -eq 'Codex')
     if (!$script:GuildPanel -or !$script:GuildPanel.Visible) { return }
 
     $isAg = ($script:CurrentGuildProduct -eq 'Antigravity')
-    $sourceList = if ($isAg) { $agList } else { $list }
-    $items = @($sourceList.Items)
+    $items = if ($isAg) { @($agList.Items) } else { @(Get-CodexAccountItems) }
 
     # 計算資料指紋 (Dirty check) 防止非必要的頻繁重繪與閃爍
     $sb = New-Object System.Text.StringBuilder
@@ -593,12 +614,12 @@ function Update-GuildView {
         }
 
         # 5 小時進度條
-        $label1 = if ($isAg) { '模型／5 小時額度' } else { '5 小時視窗用量' }
+        $label1 = if ($isAg) { '模型／5 小時額度' } elseif ($activeItem.SubItems[1].Text -eq 'API key') { '本期已用金額' } else { '5 小時視窗用量' }
         $script:VanguardBar1Lbl.Text = "${label1}:`r`n$($activeItem.SubItems[2].Text)"
         $script:VanguardBar1.Value = if ($null -ne $p1) { [Math]::Max(0, [Math]::Min(100, [int]$p1)) } else { 0 }
 
         # 每週進度條
-        $label2 = if ($isAg) { '每週額度' } else { '每週視窗用量' }
+        $label2 = if ($isAg) { '每週額度' } elseif ($activeItem.SubItems[1].Text -eq 'API key') { '預算剩餘估算' } else { '每週視窗用量' }
         $script:VanguardBar2Lbl.Text = "${label2}:`r`n$($activeItem.SubItems[3].Text)"
         $script:VanguardBar2.Value = if ($null -ne $p2) { [Math]::Max(0, [Math]::Min(100, [int]$p2)) } else { 0 }
     } else {
@@ -736,7 +757,7 @@ function Update-GuildView {
             $card.Pose = $pose
 
             $card.Name.Text = "$($item.Text)  ($($item.SubItems[1].Text))"
-            $card.Meta.Text = "5h: $($item.SubItems[2].Text)  |  週: $($item.SubItems[3].Text)"
+            $card.Meta.Text = if ($item.SubItems[1].Text -eq 'API key') { "本期已用金額: $($item.SubItems[2].Text) | 預算剩餘估算: $($item.SubItems[3].Text)" } else { "5h: $($item.SubItems[2].Text)  |  週: $($item.SubItems[3].Text)" }
             $card.Button.Tag = [string]$item.Tag
 
             $avatarImg = Get-GuildHeroFrame $script:CurrentGuildProduct $pose $script:MotionFrame

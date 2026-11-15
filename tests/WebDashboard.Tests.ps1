@@ -114,7 +114,20 @@ try {
     Check ([CodexSwitcher.Web.DashboardServer]::LastPushedHost -eq '192.168.1.195') "目標副機 IP 正確"
     Check ([CodexSwitcher.Web.DashboardServer]::LastPushedUser -eq 'vince') "目標副機使用者名稱正確"
 
-    Write-Host "PASS: 遠端 Web 儀表板、PIN 驗證、主機帳號鎖定防衝突、API 鑑權與安全推送測試全數通過！" -ForegroundColor Green
+    Update-WebDashboardState -AccountsList @($mockList[0])
+    Check (!$script:WebDashboardInstance.AccountCredentials.ContainsKey('SECONDARY_STANDBY_KEY')) '刪除帳號後清除記憶體中的可派送憑證'
+    Check ($script:WebDashboardInstance.AccountsJson.StartsWith('[')) '單一帳號仍回傳 JSON 陣列'
+    $missingBlocked = $false
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:$testPort/api/switch-remote" -Method Post -Headers @{'X-Session-Token'=$token} -Body (@{target_key='SECONDARY_STANDBY_KEY'} | ConvertTo-Json) -ContentType 'application/json' | Out-Null
+    } catch { $missingBlocked = ($_.Exception.Response.StatusCode.value__ -eq 404) }
+    Check $missingBlocked '已刪除帳號不可再透過 Web 派送'
+    Update-WebDashboardState -AccountsList @()
+    Check ($script:WebDashboardInstance.AccountsJson -eq '[]' -and $script:WebDashboardInstance.AccountCredentials.Count -eq 0) '刪除最後帳號後清空 Web 清單及憑證'
+    $emptyAccounts = Invoke-WebRequest -Uri "http://127.0.0.1:$testPort/api/accounts" -Headers @{'X-Session-Token'=$token} -UseBasicParsing
+    Check ($emptyAccounts.Content -eq '[]') 'Web API 同步回傳空清單'
+
+    Write-Host "PASS: 遠端 Web 儀表板、PIN 驗證、主機帳號鎖定防衝突、API 鑑權、安全推送與刪除同步測試全數通過！" -ForegroundColor Green
 } finally {
     Stop-WebDashboard
     [CodexSwitcher.Web.DashboardServer]::MockPushForTesting = $false

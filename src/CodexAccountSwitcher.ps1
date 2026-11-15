@@ -152,6 +152,7 @@ $script:LogPath = Join-Path $script:StorePath 'switcher.log'
 . (Join-Path $PSScriptRoot 'AntigravityQuota.ps1')
 . (Join-Path $PSScriptRoot 'WebDashboard.ps1')
 . (Join-Path $PSScriptRoot 'GuildView.ps1')
+. (Join-Path $PSScriptRoot 'CodexBilling.ps1')
 
 function Write-SwitcherLog([string]$Level, [string]$Message, [string]$Detail = '') {
     try {
@@ -179,7 +180,16 @@ function Write-Atomic([string]$Path, [byte[]]$Bytes) {
 function Get-Identity([byte[]]$Bytes) {
     try {
         $auth = $script:Utf8.GetString($Bytes) | ConvertFrom-Json
+        if ($auth.auth_mode -eq 'apikey' -or (!$auth.auth_mode -and $null -ne $auth.OPENAI_API_KEY)) {
+            if ($auth.OPENAI_API_KEY -isnot [string] -or [string]::IsNullOrWhiteSpace($auth.OPENAI_API_KEY) -or
+                $auth.OPENAI_API_KEY -match '\s' -or $auth.tokens) { throw 'apikey' }
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $key = ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes('apikey:' + $auth.OPENAI_API_KEY)))).Replace('-', '').ToLowerInvariant() }
+            finally { $sha.Dispose() }
+            return [pscustomobject]@{ Key=$key; LegacyKey=$key; Email=('API key · ' + $key.Substring(0, 8)); Account=''; AuthMode='apikey' }
+        }
         if ($auth.auth_mode -and $auth.auth_mode -ne 'chatgpt') { throw 'mode' }
+        if ($auth.OPENAI_API_KEY) { throw 'mixed credentials' }
         if (!$auth.tokens.access_token -or !$auth.tokens.refresh_token -or !$auth.tokens.id_token -or !$auth.tokens.account_id) { throw 'tokens' }
         $payload = ([string]$auth.tokens.id_token).Split('.')[1].Replace('-', '+').Replace('_', '/')
         $payload = $payload.PadRight($payload.Length + ((4 - $payload.Length % 4) % 4), '=')
@@ -195,8 +205,8 @@ function Get-Identity([byte[]]$Bytes) {
         }
         finally { $sha.Dispose() }
         if (!$email) { $email = '未提供電子郵件' }
-        [pscustomobject]@{ Key = $key; LegacyKey = $legacyKey; Email = $email; Account = [string]$auth.tokens.account_id }
-    } catch { throw '登入檔格式不支援或已損壞。請先在 Codex 使用 ChatGPT 帳號登入；本工具不支援 API Key。' }
+        [pscustomobject]@{ Key = $key; LegacyKey = $legacyKey; Email = $email; Account = [string]$auth.tokens.account_id; AuthMode='chatgpt' }
+    } catch { throw '登入檔格式不支援或已損壞。請確認為 ChatGPT 訂閱登入，或包含有效 OPENAI_API_KEY 的 API key 登入檔。' }
 }
 
 function Assert-FileStorage {
@@ -229,7 +239,8 @@ function Read-Backup([string]$Path) {
         $bytes = [Convert]::FromBase64String($record.Auth)
         $identity = Get-Identity $bytes
         if ($record.Key -notin @($identity.Key, $identity.LegacyKey)) { throw 'identity' }
-        [pscustomobject]@{ Name = [string]$record.Name; Key = $identity.Key; StoredKey = [string]$record.Key; Email = $identity.Email; Saved = [string]$record.Saved; Bytes = $bytes; Path = $Path }
+        $display = if ($identity.AuthMode -eq 'apikey' -and $record.Name) { [string]$record.Name + ' (' + $identity.Email + ')' } else { $identity.Email }
+        [pscustomobject]@{ Name = [string]$record.Name; Key = $identity.Key; StoredKey = [string]$record.Key; Email = $display; AuthMode=$identity.AuthMode; Saved = [string]$record.Saved; Bytes = $bytes; Path = $Path }
     } catch { throw '無法解密或驗證備份。備份只能由原本的 Windows 使用者開啟。' }
 }
 
@@ -264,6 +275,7 @@ function Import-LegacyCodexBackups([string]$LegacyStore) {
     foreach ($record in @(Get-AccountBackups)) { $existingKeys[$record.Key] = $true }
     foreach ($source in @($sources | Sort-Object Saved -Descending)) {
         if ($existingKeys.ContainsKey($source.Key)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $script:StorePath ($source.Key + '.deleted'))) { continue }
         $target = Join-Path $script:StorePath $source.Name
         if (Test-Path -LiteralPath $target) { continue }
         $temp = Join-Path $script:StorePath ([guid]::NewGuid().ToString('N') + '.tmp')
@@ -292,16 +304,95 @@ function Save-Backup([byte[]]$Bytes, [string]$Name, [string]$Path) {
     Write-Atomic $Path $cipher
     $verified = Read-Backup $Path
     if ([Convert]::ToBase64String($verified.Bytes) -ne [Convert]::ToBase64String($Bytes)) { throw '備份驗證失敗，已停止操作。' }
-    Write-SwitcherLog 'INFO' '儲存帳號備份' "Name=$Name, Email=$($identity.Email), Key=$($identity.Key), Path=$Path"
+    if ([IO.Path]::GetFullPath($Path) -ieq (Join-Path $script:StorePath ($identity.Key + '.bin'))) {
+        [IO.File]::Delete((Join-Path $script:StorePath ($identity.Key + '.deleted')))
+    }
+    Write-SwitcherLog 'INFO' '儲存帳號備份' "Mode=$($identity.AuthMode), Key=$($identity.Key), Path=$Path"
 }
 
 function Backup-Current([object]$Current, [string]$Name) {
     $path = Join-Path $script:StorePath ($Current.Identity.Key + '.bin')
     if (!$Name) {
+        if (Test-Path -LiteralPath (Join-Path $script:StorePath ($Current.Identity.Key + '.deleted'))) { return }
         $existing = Get-AccountBackups | Where-Object { $_.Key -eq $Current.Identity.Key }
         $Name = if ($existing) { $existing.Name } else { '自動備份 ' + $Current.Identity.Email }
     }
     Save-Backup $Current.Bytes $Name $path
+}
+
+function Save-CodexApiKey([string]$ApiKey, [string]$Name) {
+    $bytes = $script:Utf8.GetBytes((@{ auth_mode='apikey'; OPENAI_API_KEY=$ApiKey.Trim() } | ConvertTo-Json -Compress))
+    Save-Backup $bytes $Name ''
+}
+
+function Show-CodexApiKeyDialog {
+    if ($IsolatedAntigravityTestPath) { throw '獨立 Antigravity 測試模式不提供 Codex API key 儲存。' }
+    $dialog = New-Object Windows.Forms.Form
+    $dialog.Text = '新增 Codex API key'
+    $dialog.ClientSize = New-Object Drawing.Size(480, 235)
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.MaximizeBox = $false; $dialog.MinimizeBox = $false
+    $nameLabel = New-Object Windows.Forms.Label
+    $nameLabel.Text = '識別名稱'; $nameLabel.SetBounds(18, 18, 100, 22)
+    $nameInput = New-Object Windows.Forms.TextBox
+    $nameInput.SetBounds(120, 16, 340, 25); $nameInput.MaxLength = 80; $nameInput.Text = 'API key'
+    $keyLabel = New-Object Windows.Forms.Label
+    $keyLabel.Text = 'API key'; $keyLabel.SetBounds(18, 60, 100, 22)
+    $keyInput = New-Object Windows.Forms.TextBox
+    $keyInput.SetBounds(120, 58, 340, 25); $keyInput.UseSystemPasswordChar = $true
+    $hint = New-Object Windows.Forms.Label
+    $hint.SetBounds(18, 100, 442, 60)
+    $hint.Text = '以 Windows DPAPI 加密儲存，儲存後可從清單切換。此操作不變更目前登入；API key 不適用訂閱帳號的五小時／每週額度查詢。'
+    $ok = New-Object Windows.Forms.Button
+    $ok.Text = '儲存'; $ok.SetBounds(272, 185, 90, 32)
+    $ok.Add_Click({
+        try {
+            Save-CodexApiKey $keyInput.Text $nameInput.Text
+            $dialog.DialogResult = [Windows.Forms.DialogResult]::OK
+        } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, '無法儲存', 'OK', 'Warning') | Out-Null }
+    })
+    $cancel = New-Object Windows.Forms.Button
+    $cancel.Text = '取消'; $cancel.SetBounds(372, 185, 90, 32); $cancel.DialogResult = 'Cancel'
+    $dialog.AcceptButton = $ok; $dialog.CancelButton = $cancel
+    $dialog.Controls.AddRange(@($nameLabel,$nameInput,$keyLabel,$keyInput,$hint,$ok,$cancel))
+    try {
+        if ($dialog.ShowDialog($form) -eq 'OK') { Set-Status '已加密儲存 API key；選取該筆後可切換並重新啟動。' }
+    } finally { $keyInput.Clear(); $dialog.Dispose() }
+}
+
+function Remove-AccountBackup([string]$Path, [switch]$Antigravity) {
+    $store = [IO.Path]::GetFullPath($(if ($Antigravity) { $script:AGStorePath } else { $script:StorePath })).TrimEnd('\')
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if ([IO.Path]::GetDirectoryName($fullPath) -ine $store -or [IO.Path]::GetExtension($fullPath) -ine '.bin') {
+        throw '只能刪除所選產品備份目錄內的帳號備份。'
+    }
+    $target = if ($Antigravity) { Read-AGBackup $fullPath } else { Read-Backup $fullPath }
+    $paths = @(
+        foreach ($file in @(Get-ChildItem -LiteralPath $store -File)) {
+            if ($file.Extension -ine '.bin' -and $file.Name -ine 'last-switch.rollback') { continue }
+            if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw '備份不可使用連結檔案，已停止刪除。' }
+            try { $record = if ($Antigravity) { Read-AGBackup $file.FullName } else { Read-Backup $file.FullName } }
+            catch { continue }
+            if ($record.Key -eq $target.Key) { $file.FullName }
+        }
+    )
+    Write-Atomic (Join-Path $store ($target.Key + '.deleted')) ([byte[]]@(1))
+    foreach ($backupPath in $paths) { [IO.File]::Delete($backupPath) }
+    if (!$Antigravity) {
+        $billingPath = Get-CodexBillingPath $target.Key
+        if ([IO.File]::Exists($billingPath)) { [IO.File]::Delete($billingPath) }
+    }
+    Write-SwitcherLog 'INFO' '已刪除帳號備份' "Antigravity=$Antigravity, Key=$($target.Key), Count=$($paths.Count)"
+}
+
+function Confirm-AccountDeletion([string]$Path, [switch]$Antigravity) {
+    $record = if ($Antigravity) { Read-AGBackup $Path } else { Read-Backup $Path }
+    $product = if ($Antigravity) { 'Antigravity' } else { 'Codex' }
+    $answer = [Windows.Forms.MessageBox]::Show("確定刪除 $product 備份「$($record.Email)」？`r`n`r`n將刪除此帳號的所有本工具備份及相符還原點，無法復原。`r`n不會登出、撤銷憑證或變更目前登入、工作區與對話。舊版工具原件保留，但不會再次自動匯入。", '刪除已儲存帳號', 'YesNo', 'Warning', 'Button2')
+    if ($answer -ne 'Yes') { return }
+    Remove-AccountBackup $Path -Antigravity:$Antigravity
+    Set-Status "已刪除 $product 帳號備份；目前登入維持原狀。"
 }
 
 function Get-CodexCliPath {
@@ -714,6 +805,7 @@ function Stop-QuotaQueries {
 }
 
 function Start-QuotaQuery([byte[]]$Bytes, [string]$Key) {
+    if ((Get-Identity $Bytes).AuthMode -eq 'apikey') { return }
     $auth = $script:Utf8.GetString($Bytes) | ConvertFrom-Json
     $cancel = New-Object Threading.CancellationTokenSource
     $task = [CodexSwitcher.QuotaClient]::Fetch($auth.tokens.access_token, $auth.tokens.account_id, $cancel.Token, $null)
@@ -726,10 +818,15 @@ function Update-QuotaResults {
     $changed = $false
     foreach ($job in @($script:QuotaJobs)) {
         if (!$job.Task.IsCompleted) { continue }
+        $completed = $true
         try {
-            if ($job.Generation -ne $script:QuotaGeneration -or !$list.Items.ContainsKey($job.Key)) { continue }
-            $quota = ConvertFrom-QuotaReply ($job.Task.GetAwaiter().GetResult())
-            $item = $list.Items[$job.Key]
+            $targetList = if ($job.Kind -eq 'Billing') { $apiList } else { $list }
+            if ($job.Generation -ne $script:QuotaGeneration -or !$targetList.Items.ContainsKey($job.Key)) { continue }
+            if ($job.Kind -eq 'Billing') {
+                $quota = Complete-CodexBillingPage $job
+                if ($null -eq $quota) { $completed=$false; continue }
+            } else { $quota = ConvertFrom-QuotaReply ($job.Task.GetAwaiter().GetResult()) }
+            $item = $targetList.Items[$job.Key]
             $item.SubItems[1].Text = $quota.Plan
             $item.SubItems[2].Text = $quota.Primary
             $item.SubItems[3].Text = $quota.Secondary
@@ -740,14 +837,17 @@ function Update-QuotaResults {
             $item.ToolTipText = $quota.Detail
             $changed = $true
         } finally {
-            $job.Cancellation.Dispose()
-            $script:QuotaJobs = @($script:QuotaJobs | Where-Object { $_ -ne $job })
+            if ($completed) {
+                $job.Cancellation.Dispose()
+                $script:QuotaJobs = @($script:QuotaJobs | Where-Object { $_ -ne $job })
+            }
         }
     }
     if ($changed -or ($script:QuotaQueryStarted -and !$script:QuotaJobs.Count)) {
         if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：' + (Get-Date).ToString('HH:mm:ss') }
         if (!$script:QuotaJobs.Count) { $script:QuotaQueryStarted = $false }
         Sync-WebDashboardAccounts
+        Update-GuildView
     }
 }
 
@@ -825,8 +925,8 @@ function Invoke-SelfTest {
             Check ([IO.File]::Exists($path) -and [IO.File]::ReadAllText($path) -ceq $preserved[$path]) '切換、還原及失敗恢復均保留工作區與設定原文'
         }
         $rejected = $false
-        try { Get-Identity $script:Utf8.GetBytes('{"OPENAI_API_KEY":"fake"}') | Out-Null } catch { $rejected = $true }
-        Check $rejected '拒絕不支援的登入檔'
+        try { Get-Identity $script:Utf8.GetBytes('{"auth_mode":"apikey","OPENAI_API_KEY":""}') | Out-Null } catch { $rejected = $true }
+        Check $rejected '拒絕空白 API key 登入檔'
         Write-Atomic (Join-Path $sandbox 'config.toml') $script:Utf8.GetBytes('cli_auth_credentials_store = "keyring"')
         $rejected = $false
         try { Read-Current | Out-Null } catch { $rejected = $true }
@@ -869,6 +969,7 @@ try {
     [void][NativeGuiHelper]::SetCurrentProcessExplicitAppUserModelID('CodexTools.CodexAntigravitySwitcher')
 } catch { }
 Initialize-QuotaClient
+Initialize-CodexBillingClient
 Initialize-AGQuotaClient
 $mutexName = if ($IsolatedAntigravityTestPath) { 'Local\CodexAccountSwitcher-AG-IsolatedTest' } else { 'Local\CodexAccountSwitcher' }
 $mutex = New-Object Threading.Mutex($false, $mutexName)
@@ -960,10 +1061,25 @@ function Invoke-Action([scriptblock]$Action, [scriptblock]$Refresh = { Refresh-A
         }
     }
 }
+function Get-CodexAccountItems {
+    foreach ($table in @($list, $apiList)) {
+        if ($null -ne $table) { foreach ($item in $table.Items) { $item } }
+    }
+}
+
+function Get-SelectedCodexAccount {
+    foreach ($table in @($list, $apiList)) {
+        if ($null -ne $table -and $table.SelectedItems.Count) { return $table.SelectedItems[0] }
+    }
+    throw '請先在訂閱帳號或 API key 表格選擇帳號。'
+}
+
 function Refresh-Accounts {
     Stop-QuotaQueries
+    $script:NextBillingReset = $null
     if ($null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：查詢中…' }
     $list.Items.Clear()
+    $apiList.Items.Clear()
     $currentKey = ''
     try {
         $current = Read-Current
@@ -974,18 +1090,22 @@ function Refresh-Accounts {
     foreach ($record in @(Get-AccountBackups -BadCount ([ref]$bad))) {
         try {
             $item = New-Object Windows.Forms.ListViewItem($record.Email)
-            foreach ($value in @('—','查詢中…','查詢中…')) { [void]$item.SubItems.Add($value) }
+            $isApiKey = $record.AuthMode -eq 'apikey'
+            $columns = if ($isApiKey) { @('API key','未設定','未設定') } else { @('—','查詢中…','查詢中…') }
+            foreach ($value in $columns) { [void]$item.SubItems.Add($value) }
             [void]$item.SubItems.Add($(if ($record.Key -eq $currentKey) { '目前' } else { '' }))
-            [void]$item.SubItems.Add('查詢中…')
+            [void]$item.SubItems.Add($(if ($isApiKey) { 'API 計費' } else { '查詢中…' }))
             [void]$item.SubItems.Add($record.Saved)
             $item.Name=$record.Key
             $item.Tag=$record.Path
-            [void]$list.Items.Add($item)
+            $targetList = if ($isApiKey) { $apiList } else { $list }
+            [void]$targetList.Items.Add($item)
             $bytes = if ($record.Key -eq $currentKey) { $current.Bytes } else { $record.Bytes }
-            Start-QuotaQuery $bytes $record.Key
+            if ($isApiKey) { Start-CodexBillingQuery $record.Key $item }
+            else { Start-QuotaQuery $bytes $record.Key }
         } catch { $bad++ }
     }
-    Write-SwitcherLog 'DEBUG' '刷新清單完成' "CurrentKey=$currentKey, Backups=$($list.Items.Count), Corrupted=$bad"
+    Write-SwitcherLog 'DEBUG' '刷新清單完成' "CurrentKey=$currentKey, Subscriptions=$($list.Items.Count), ApiKeys=$($apiList.Items.Count), Corrupted=$bad"
     if (!$script:QuotaJobs.Count -and $null -ne $lastQueryLabel) { $lastQueryLabel.Text = '最後查詢：無可查詢帳號' }
     if ($bad) { Set-Status "有 $bad 個備份無法解密，未列入清單；原檔已保留。" }
     Sync-WebDashboardAccounts
@@ -1009,8 +1129,9 @@ function Sync-WebDashboardAccounts {
     if (!$script:WebDashboardInstance -or !$script:WebDashboardInstance.IsRunning) { return }
 
     $accounts = @()
-    if ($list -and $list.Items.Count -gt 0) {
-        foreach ($item in $list.Items) {
+    $items = @(Get-CodexAccountItems)
+    if ($items.Count -gt 0) {
+        foreach ($item in $items) {
             try {
                 $p1Text = [string]$item.SubItems[2].Text
                 $p2Text = [string]$item.SubItems[3].Text
@@ -1049,7 +1170,7 @@ function Sync-WebDashboardAccounts {
                     Key = $rec.Key
                     Name = $rec.Email
                     Email = $rec.Email
-                    Plan = '—'
+                    Plan = if ($rec.AuthMode -eq 'apikey') { 'API key' } else { '—' }
                     Primary = '未知'
                     Secondary = '未知'
                     PrimaryRemaining = -1
@@ -1112,23 +1233,37 @@ $save=New-Button '儲存目前帳號' 1088 62 184 {
         Set-Status '已加密儲存目前帳號。之後使用本工具切換，不要先在 Codex 按登出。'
     }
 }
+$subscriptionTitle=New-Label '訂閱帳號' 26 110 1246 24
+$subscriptionTitle.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 10, [Drawing.FontStyle]::Bold)
 $list=New-Object Windows.Forms.ListView
-$list.SetBounds(26,118,1246,246); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
+$list.SetBounds(26,138,1246,112); $list.View='Details'; $list.FullRowSelect=$true; $list.MultiSelect=$false; $list.HideSelection=$false; $list.ShowItemToolTips=$true
 foreach ($column in @(@('帳號',270),@('方案',70),@('5 小時用量／重置',230),@('週用量／重置',230),@('使用中',60),@('查詢狀態',115),@('備份時間',160))) { [void]$list.Columns.Add($column[0],$column[1]) }
 $codexTab.Controls.Add($list)
-$switch=New-Button '切換並重新啟動' 26 380 160 {
+$apiTitle=New-Label 'API key 帳號（USD）' 26 260 1246 24
+$apiTitle.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 10, [Drawing.FontStyle]::Bold)
+$apiList=New-Object Windows.Forms.ListView
+$apiList.SetBounds(26,288,1246,112); $apiList.View='Details'; $apiList.FullRowSelect=$true; $apiList.MultiSelect=$false; $apiList.HideSelection=$false; $apiList.ShowItemToolTips=$true
+foreach ($column in @(@('帳號',270),@('類型',70),@('本期已用金額',230),@('預算剩餘估算',230),@('使用中',60),@('查詢狀態',115),@('備份時間',160))) { [void]$apiList.Columns.Add($column[0],$column[1]) }
+$codexTab.Controls.Add($apiList)
+$list.Add_SelectedIndexChanged({
+    if ($list.SelectedItems.Count) { foreach ($item in @($apiList.SelectedItems)) { $item.Selected=$false } }
+})
+$apiList.Add_SelectedIndexChanged({
+    if ($apiList.SelectedItems.Count) { foreach ($item in @($list.SelectedItems)) { $item.Selected=$false } }
+})
+$switch=New-Button '切換並重新啟動' 26 412 160 {
     Invoke-Action {
-        if (!$list.SelectedItems.Count) { throw '請先選擇要切換的帳號。' }
-        Switch-Account ([string]$list.SelectedItems[0].Tag)
+        $selected=Get-SelectedCodexAccount
+        Switch-Account ([string]$selected.Tag)
         Refresh-Accounts
     }
 }
-$login=New-Button '引導登入新帳號' 196 380 160 {
+$login=New-Button '引導登入新帳號' 196 412 160 {
     Invoke-Action {
         Start-GuidedLogin
     }
 }
-$restore=New-Button '還原上次切換' 366 380 150 {
+$restore=New-Button '還原上次切換' 366 412 150 {
     Invoke-Action {
         $path=Join-Path $script:StorePath 'last-switch.rollback'
         if (!(Test-Path -LiteralPath $path)) { throw '目前沒有切換還原點。' }
@@ -1136,14 +1271,29 @@ $restore=New-Button '還原上次切換' 366 380 150 {
         Refresh-Accounts
     }
 }
-$refresh=New-Button '重新整理帳號與額度' 1086 380 186 { Invoke-Action { Refresh-Accounts } }
-$lastQueryLabel=New-Label '最後查詢：尚未查詢' 1022 422 250 24
+$addApiKey=New-Button '新增 API key' 526 412 150 {
+    Invoke-Action { Show-CodexApiKeyDialog }
+}
+$delete=New-Button '刪除已儲存帳號' 686 412 160 {
+    Invoke-Action {
+        $selected=Get-SelectedCodexAccount
+        Confirm-AccountDeletion ([string]$selected.Tag)
+    }
+}
+$billing=New-Button 'API 預算設定' 856 412 220 {
+    Invoke-Action {
+        if (!$apiList.SelectedItems.Count) { throw '請先在 API key 表格選擇要設定預算的帳號。' }
+        Show-CodexBillingDialog ([string]$apiList.SelectedItems[0].Tag)
+    }
+}
+$refresh=New-Button '重新整理帳號與額度' 1086 412 186 { Invoke-Action { Refresh-Accounts } }
+$lastQueryLabel=New-Label '最後查詢：尚未查詢' 1022 454 250 24
 $lastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
 $lastQueryLabel.TextAlign='MiddleCenter'
 $lastQueryLabel.ForeColor=[Drawing.Color]::FromArgb(70,80,90)
-$status=New-Label '只換 auth，不執行登出；保留現有工作區。已被登出撤銷的備份需重新登入並儲存。' 26 430 800 40
+$status=New-Label '選取任一表格中的帳號即可切換或刪除；API 預算設定請選取 API key 帳號。' 26 456 980 36
 $status.ForeColor=[Drawing.Color]::FromArgb(45,75,90)
-$note=New-Label '額度唯讀查詢，不自動換發 Token。倒數為查詢時快照；滑鼠停留帳號列可查看重置時間及其他額度。' 26 480 1066 42
+$note=New-Label '訂閱帳號顯示 5 小時／週額度；API key 顯示 OpenAI 本期費用與預算估算。滑鼠停留帳號列可查看查詢範圍及週期。' 26 500 1246 30
 $note.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8)
 $script:CurrentPage = $agTab
 $agTitle = New-Label 'Antigravity 帳號切換' 24 18 520 34
@@ -1176,6 +1326,12 @@ $agRestore = New-Button '還原上次切換' 366 380 150 {
 $agLogin = New-Button '引導登入新帳號' 196 380 160 {
     Invoke-Action { Start-AGGuidedLogin } { Refresh-AGAccounts }
 }
+$agDelete = New-Button '刪除已儲存帳號' 526 380 160 {
+    Invoke-Action {
+        if (!$agList.SelectedItems.Count) { throw '請先選擇要刪除的 Antigravity 帳號。' }
+        Confirm-AccountDeletion ([string]$agList.SelectedItems[0].Tag) -Antigravity
+    } { Refresh-AGAccounts }
+}
 $agRefresh = New-Button '重新整理帳號與額度' 1086 380 186 { Invoke-Action { Refresh-AGAccounts } { Refresh-AGAccounts } }
 $agLastQueryLabel=New-Label '最後查詢：尚未查詢' 1022 422 250 24
 $agLastQueryLabel.Font=New-Object Drawing.Font('Microsoft JhengHei UI', 8.5)
@@ -1189,7 +1345,7 @@ $agStatus = New-Label '只切換 Antigravity 認證；保留工作區、對話�
 $agStatus.ForeColor = [Drawing.Color]::FromArgb(45,75,90)
 $agNote = New-Label 'G：Gemini、C：Claude/GPT、A：Argon；* 為模型額度（週期未標示）。括號為重置時間／剩餘天數；未提供的額度不估算。' 26 480 1066 42
 $agNote.Font = New-Object Drawing.Font('Microsoft JhengHei UI', 8)
-$script:Buttons=@($save,$switch,$login,$restore,$refresh,$viewLog,$agSave,$agSwitch,$agRestore,$agLogin,$agRefresh,$agLog)
+$script:Buttons=@($save,$switch,$login,$restore,$addApiKey,$delete,$billing,$refresh,$viewLog,$agSave,$agSwitch,$agRestore,$agLogin,$agDelete,$agRefresh,$agLog)
 if ($IsolatedAntigravityTestPath) {
     foreach ($button in $codexTab.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled=$false } }
     $currentLabel.Text = '獨立測試模式：未讀取既有 Codex 帳號與備份。'
@@ -1197,7 +1353,7 @@ if ($IsolatedAntigravityTestPath) {
 }
 $quotaTimer = New-Object Windows.Forms.Timer
 $quotaTimer.Interval = 200
-$quotaTimer.Add_Tick({ Update-QuotaResults; Update-AGQuotaResults })
+$quotaTimer.Add_Tick({ Update-QuotaResults; Update-AGQuotaResults; Update-CodexBillingCycles })
 function Initialize-WebDashboardTab {
     $script:CurrentPage = $webTab
 
@@ -1452,6 +1608,9 @@ try {
         foreach ($value in @('—','未知','未知','','需重新授權','2026-09-16 09:00')) { [void]$item.SubItems.Add($value) }
         [void]$list.Items.Add($item)
         $agCurrentLabel.Text = '目前登入：account-b@example.invalid'
+        $apiItem=New-Object Windows.Forms.ListViewItem('API 測試帳號 (API key · 12345678)')
+        foreach ($value in @('API key','USD 12.34','估 USD 87.66 (87.7%)','','已更新（估算）','2026-11-15 12:00')) { [void]$apiItem.SubItems.Add($value) }
+        [void]$apiList.Items.Add($apiItem)
         $agItem = New-Object Windows.Forms.ListViewItem('account-b@example.invalid')
         foreach ($value in @('Pro','G 86% (21:40) / C 100% (22:10) / A 僅每週','G 48% (1.1d) / C 1% (2.5d) / A 95% (6.9d)','目前','已更新','2026-09-24 12:00')) { [void]$agItem.SubItems.Add($value) }
         $agItem.UseItemStyleForSubItems=$false

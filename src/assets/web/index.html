@@ -582,7 +582,7 @@
             <div class="quota-box">
               <div class="quota-item">
                 <div class="quota-meta">
-                  <span class="quota-label">5 小時額度</span>
+                  <span class="quota-label">${acc.plan === 'API key' ? '本期已用金額' : '5 小時額度'}</span>
                   <span class="quota-val" style="color: ${pColor}">${acc.primary || '未知'}</span>
                 </div>
                 <div class="progress-track">
@@ -591,7 +591,7 @@
               </div>
               <div class="quota-item">
                 <div class="quota-meta">
-                  <span class="quota-label">每週額度</span>
+                  <span class="quota-label">${acc.plan === 'API key' ? '預算剩餘估算' : '每週額度'}</span>
                   <span class="quota-val" style="color: ${sColor}">${acc.secondary || '未知'}</span>
                 </div>
                 <div class="progress-track">

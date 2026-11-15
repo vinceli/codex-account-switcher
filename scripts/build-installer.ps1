@@ -2,7 +2,7 @@
 # Codex 帳號切換工具 - 自動化封裝與安全隔離審計建置腳本
 # ==============================================================================
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = "1.1.0",
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = "1.3.2",
     [ValidatePattern('^Setup-CodexAntigravitySwitcher(?:-[A-Za-z0-9.]+)?\.exe$')][string]$SetupFileName = 'Setup-CodexAntigravitySwitcher.exe'
 )
 
@@ -54,6 +54,7 @@ $whitelist = @(
     'CodexAccountSwitcher.ps1',
     'AntigravityCredential.ps1',
     'AntigravityQuota.ps1',
+    'CodexBilling.ps1',
     'GuildView.ps1',
     'WebDashboard.ps1',
     'Launcher.cs',

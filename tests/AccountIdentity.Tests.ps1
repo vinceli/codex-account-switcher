@@ -16,6 +16,7 @@ $script:CodexPath = Join-Path $sandbox 'codex'
 $script:AuthPath = Join-Path $script:CodexPath 'auth.json'
 $script:LogPath = Join-Path $script:StorePath 'switcher.log'
 . (Join-Path $sourceRoot 'AntigravityCredential.ps1')
+. (Join-Path $sourceRoot 'CodexBilling.ps1')
 Initialize-AGCredential
 
 function Check([bool]$Condition, [string]$Message) {
@@ -47,6 +48,7 @@ function Write-TestBackup([byte[]]$Bytes, [string]$Name, [string]$Saved, [switch
 }
 function Stop-QuotaQueries {}
 function Stop-AGQuotaQueries {}
+$realStartQuotaQuery = ${function:Start-QuotaQuery}
 function Start-QuotaQuery([byte[]]$Bytes, [string]$Key) {
     $script:CodexRequests += [pscustomobject]@{ Bytes=$Bytes; Key=$Key }
 }
@@ -58,6 +60,7 @@ function Update-WebDashboardState([string]$HostActiveKey, [string]$RemoteHost, [
 }
 
 $list = New-Object Windows.Forms.ListView
+$apiList = New-Object Windows.Forms.ListView
 $agList = New-Object Windows.Forms.ListView
 $currentLabel = New-Object Windows.Forms.Label
 $agCurrentLabel = New-Object Windows.Forms.Label
@@ -153,9 +156,98 @@ try {
     $rejected = $false
     try { Read-Backup $tamperedPath | Out-Null } catch { $rejected = $true }
     Check $rejected '不同帳號的錯誤備份識別仍被拒絕'
-    'PASS: 帳號唯一識別、舊備份去重、最新資料選取、重複儲存、舊版匯入、兩套清單與 Web 主機鎖定。未讀寫真實憑證。'
+    $apiSecret = 'synthetic-api-account-A'
+    $apiBytes = $script:Utf8.GetBytes((@{ auth_mode='apikey'; OPENAI_API_KEY=$apiSecret } | ConvertTo-Json -Compress))
+    $apiIdentity = Get-Identity $apiBytes
+    $legacyApi = $script:Utf8.GetBytes((@{ OPENAI_API_KEY=$apiSecret } | ConvertTo-Json -Compress))
+    Check ($apiIdentity.AuthMode -eq 'apikey' -and $apiIdentity.Key -eq (Get-Identity $legacyApi).Key) '支援目前及未標註模式的 API key 登入檔'
+    Check (!$apiIdentity.Email.Contains($apiSecret) -and $apiIdentity.Key -ne (Get-Identity $current).Key) 'API key 遮蔽顯示並與訂閱帳號隔離'
+    foreach ($badAuth in @(
+        @{ auth_mode='apikey'; OPENAI_API_KEY='' },
+        @{ auth_mode='apikey'; OPENAI_API_KEY='   ' },
+        @{ auth_mode='apikey'; OPENAI_API_KEY=123 },
+        @{ auth_mode='apikey'; OPENAI_API_KEY='invalid key' },
+        @{ auth_mode='chatgpt'; OPENAI_API_KEY=$apiSecret },
+        @{ auth_mode='other'; OPENAI_API_KEY=$apiSecret },
+        @{ auth_mode='apikey'; OPENAI_API_KEY=$apiSecret; tokens=@{ access_token='mixed' } }
+    )) {
+        $rejected = $false
+        try { Get-Identity $script:Utf8.GetBytes(($badAuth | ConvertTo-Json -Compress)) | Out-Null }
+        catch { $rejected = $true; Check (!$_.Exception.Message.Contains($apiSecret)) '格式錯誤不洩漏 API key' }
+        Check $rejected '拒絕不完整或混用的 API key 認證'
+    }
+    $beforeAuth = [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:AuthPath))
+    Save-CodexApiKey ('  ' + $apiSecret + '  ') '測試 API'
+    $apiPath = Join-Path $script:StorePath ($apiIdentity.Key + '.bin')
+    Check ((Read-Backup $apiPath).AuthMode -eq 'apikey' -and (Read-Backup $apiPath).Name -eq '測試 API') '直接新增 API key 並讀回 DPAPI 備份'
+    Check (![IO.File]::ReadAllText($apiPath).Contains($apiSecret) -and ![IO.File]::ReadAllText($script:LogPath).Contains($apiSecret)) 'API key 不以明文寫入備份或日誌'
+    Check ($beforeAuth -eq [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:AuthPath))) '新增 API key 不變更目前登入'
+    Save-CodexApiKey $apiSecret 'API 更新名稱'
+    Check (@(Get-AccountBackups | Where-Object { $_.AuthMode -eq 'apikey' }).Count -eq 1) '相同 API key 重複儲存只更新同一筆'
+    Save-CodexApiKey 'synthetic-api-account-B' '第二把 API key'
+    Check (@(Get-AccountBackups | Where-Object { $_.AuthMode -eq 'apikey' }).Count -eq 2) '不同 API key 分別保存'
+    $script:CodexRequests = @()
+    Refresh-Accounts
+    Check ($list.Items.Count -eq 1 -and $apiList.Items.Count -eq 2 -and $script:CodexRequests.Count -eq 1) '訂閱與 API key 分別列入獨立表格，只有訂閱帳號查詢訂閱額度'
+    Check ($apiList.Items[$apiIdentity.Key].SubItems[1].Text -eq 'API key' -and $apiList.Items[$apiIdentity.Key].SubItems[2].Text -eq '未設定' -and $apiList.Items[$apiIdentity.Key].SubItems[5].Text -eq 'API 計費') 'API key 未設定預算時明示未設定'
+    Check ($apiList.Items[$apiIdentity.Key].Text.Contains('API 更新名稱') -and !$apiList.Items[$apiIdentity.Key].Text.Contains($apiSecret)) 'API key 表格使用名稱與雜湊摘要，不顯示金鑰'
+    Check ($script:WebSnapshot.Accounts.Count -eq 3) 'Web 同步合併兩張表格的帳號，沒有遺漏 API key'
+    & $realStartQuotaQuery $apiBytes $apiIdentity.Key
+    Check (!$script:QuotaJobs.Count) '額度入口直接拒絕向訂閱用量端點傳送 API key'
+    Install-Auth (Read-Backup $apiPath).Bytes
+    Check ((Read-Current).Identity.Key -eq $apiIdentity.Key) '訂閱帳號可切換至 API key'
+    $script:CodexRequests = @()
+    Refresh-Accounts
+    Check ($apiList.Items[$apiIdentity.Key].SubItems[4].Text -eq '目前' -and $script:WebSnapshot.HostKey -eq $apiIdentity.Key) '獨立 API key 表格的目前帳號與 Web 鎖定一致'
+    $apiRollback = Join-Path $script:StorePath 'last-switch.rollback'
+    Install-Auth (Read-Backup $apiRollback).Bytes
+    Check ((Read-Current).Identity.Key -eq (Get-Identity $current).Key) 'API key 可還原至訂閱帳號'
+
+    # 刪除涵蓋同帳號的所有舊檔，且不復活於舊版匯入與切換自動備份。
+    $currentKey = (Get-Identity $current).Key
+    Save-Backup $current '相符還原點' $apiRollback
+    $beforeAuth = [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:AuthPath))
+    Remove-AccountBackup $canonicalPath
+    Check (!(Test-Path -LiteralPath $oldPath) -and !(Test-Path -LiteralPath $latestPath) -and !(Test-Path -LiteralPath $canonicalPath) -and !(Test-Path -LiteralPath $apiRollback)) 'Codex 刪除所有同帳號重複備份及相符還原點'
+    Check ((Import-LegacyCodexBackups $legacyStore) -eq 0) '重新啟動的舊版匯入不會復活已刪帳號'
+    Check (@(Get-ChildItem -LiteralPath $legacyStore -Filter '*.bin' -File).Count -eq 2) '刪除不變更舊版原件'
+    Backup-Current (Read-Current) ''
+    Check (!(Test-Path -LiteralPath $canonicalPath)) '刪除目前帳號後自動備份不會重新加入'
+    Check ($beforeAuth -eq [Convert]::ToBase64String([IO.File]::ReadAllBytes($script:AuthPath))) '刪除目前帳號不會登出或覆寫登入檔'
+    Check ((Test-Path -LiteralPath $apiPath) -and (Test-Path -LiteralPath (Join-Path $script:StorePath 'broken.bin'))) '其他帳號與無法識別的損壞檔保留'
+    Check (@(Get-AccountBackups -Antigravity).Count -eq 1) 'Codex 刪除不影響 Antigravity'
+    Backup-Current (Read-Current) '明確重新儲存'
+    Check ((Test-Path -LiteralPath $canonicalPath) -and !(Test-Path -LiteralPath (Join-Path $script:StorePath ($currentKey + '.deleted')))) '明確儲存可重新加入已刪帳號'
+    Save-Backup $current '其他帳號還原點' $apiRollback
+    Remove-AccountBackup $apiPath
+    Check (!(Test-Path -LiteralPath $apiPath) -and (Test-Path -LiteralPath $apiRollback)) 'API key 可刪除且保留其他帳號還原點'
+    $script:CodexRequests = @()
+    Refresh-Accounts
+    Check (!$apiList.Items.ContainsKey($apiIdentity.Key) -and @($script:WebSnapshot.Accounts | Where-Object { $_.Key -eq $apiIdentity.Key }).Count -eq 0) '刪除後 API key 表格與 Web 同步移除帳號'
+    Save-CodexApiKey $apiSecret '重新新增 API'
+    Check ((Test-Path -LiteralPath $apiPath) -and !(Test-Path -LiteralPath (Join-Path $script:StorePath ($apiIdentity.Key + '.deleted')))) 'API key 刪除後可明確重新新增'
+
+    $agPath = (Get-AccountBackups -Antigravity).Path
+    $agRollback = Join-Path $script:AGStorePath 'last-switch.rollback'
+    Save-AGBackup $script:FakeAGCurrent '相符 AG 還原點' $agRollback
+    $agBefore = [Convert]::ToBase64String($script:FakeAGCurrent.Entry.Blob)
+    foreach ($wrongPath in @($canonicalPath,$tamperedPath,$agRollback)) {
+        $rejected = $false
+        try { Remove-AccountBackup $wrongPath -Antigravity } catch { $rejected = $true }
+        Check ($rejected -and (Test-Path -LiteralPath $wrongPath)) '拒絕跨產品、目錄外或還原點作為刪除入口'
+    }
+    Remove-AccountBackup $agPath -Antigravity
+    Check (@(Get-ChildItem -LiteralPath $script:AGStorePath -Filter '*.bin' -File).Count -eq 0 -and !(Test-Path -LiteralPath $agRollback)) 'Antigravity 刪除全部舊版、正式備份及相符還原點'
+    Backup-AGCurrent $script:FakeAGCurrent ''
+    Check (@(Get-AccountBackups -Antigravity).Count -eq 0 -and (Test-Path -LiteralPath $canonicalPath)) 'Antigravity 自動備份不復活且不影響 Codex'
+    Check ([Convert]::ToBase64String($script:FakeAGCurrent.Entry.Blob) -eq $agBefore) 'Antigravity 刪除不變更目前登入認證'
+    Refresh-AGAccounts
+    Check ($agList.Items.Count -eq 0) '刪除最後一筆 Antigravity 帳號後清單為空'
+    Save-AGBackup $script:FakeAGCurrent '明確重新儲存 AG' ''
+    Check (@(Get-AccountBackups -Antigravity).Count -eq 1) 'Antigravity 刪除後可明確重新儲存'
+    'PASS: 帳號唯一識別、API key 加密儲存與雙向切換、額度隔離、Codex／Antigravity 刪除、重複備份清除、刪除防復活及 Web 同步。未讀寫真實憑證。'
 } finally {
-    foreach ($control in @($list,$agList,$currentLabel,$agCurrentLabel,$nameBox,$agNameBox,$lastQueryLabel,$agLastQueryLabel,$status,$agStatus)) { $control.Dispose() }
+    foreach ($control in @($list,$apiList,$agList,$currentLabel,$agCurrentLabel,$nameBox,$agNameBox,$lastQueryLabel,$agLastQueryLabel,$status,$agStatus)) { $control.Dispose() }
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
     if ([IO.Path]::GetFullPath($sandbox).StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $sandbox -Leaf) -like 'AccountIdentityTest-*') {
         Remove-Item -LiteralPath $sandbox -Recurse -Force

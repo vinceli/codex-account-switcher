@@ -11,6 +11,7 @@ foreach ($statement in $ast.EndBlock.Statements) {
 }
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Initialize-QuotaClient
+function Update-GuildView {}
 Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition @'
 using System;
 using System.Net;

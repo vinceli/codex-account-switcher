@@ -22,7 +22,11 @@ if ($LASTEXITCODE -eq 0 -and $result -match '^PASS') {
     if ($LASTEXITCODE -ne 0) { exit 1 }
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Quota.Tests.ps1')
     if ($LASTEXITCODE -ne 0) { exit 1 }
+    & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Billing.Tests.ps1')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'GuildDialog.Tests.ps1')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'AccountManagementUi.Tests.ps1')
     if ($LASTEXITCODE -ne 0) { exit 1 }
     & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'WebDashboard.Tests.ps1')
     if ($LASTEXITCODE -ne 0) { exit 1 }

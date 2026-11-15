@@ -433,7 +433,7 @@ function Update-WebDashboardState {
         if ($RemoteHost) { $script:WebDashboardInstance.RemoteHost = $RemoteHost }
         if ($RemoteUser) { $script:WebDashboardInstance.RemoteUser = $RemoteUser }
 
-        if ($AccountsList) {
+        if ($PSBoundParameters.ContainsKey('AccountsList')) {
             $script:WebDashboardInstance.AccountCredentials.Clear()
             $dtos = @()
             foreach ($acc in $AccountsList) {
@@ -456,7 +456,7 @@ function Update-WebDashboardState {
                     lock_reason = if ($isHostActive) { '此帳號目前正由主機執勤中，已鎖定禁止副機切換。' } else { '' }
                 }
             }
-            $script:WebDashboardInstance.AccountsJson = ($dtos | ConvertTo-Json -Depth 5 -Compress)
+            $script:WebDashboardInstance.AccountsJson = ConvertTo-Json -InputObject @($dtos) -Depth 5 -Compress
         }
     }
 }
