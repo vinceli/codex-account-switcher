@@ -82,14 +82,24 @@
 
 ## 🚀 快速開始
 
+> [!NOTE]
+> `dist/` 由 `.gitignore` 排除，不會納入 Git 版控；若您從原始碼複製專案，可直接啟動 `src\CodexAccountSwitcher.exe`，或依「方式三」在本機建置發行包（或改由 GitHub Releases 取得預編譯發行檔）。
+
 ### 方式一：使用 GUI 安裝程式（推薦）
-1. 執行發行包中的 `Setup-CodexAntigravitySwitcher.exe`。
+1. 執行發行檔 `Setup-CodexAntigravitySwitcher.exe`（來自 GitHub Releases 或本機建置產出的 `dist\`）。
 2. 新版預設安裝至 `%LOCALAPPDATA%\Programs\CodexAntigravitySwitcher`（不需系統管理員權限），不覆寫既有 `CodexAccountSwitcher` 安裝。
 3. 安裝完成後將自動在**桌面**與**開始功能表**建立「Codex 與 Antigravity 帳號切換」捷徑。
 
 ### 方式二：綠色免安裝版
-1. 解壓縮 `CodexAccountSwitcher-v1.3.2-Portable.zip` 至任意資料夾。
-2. 點擊 `Install.bat` 即可一鍵建立桌面捷徑；亦可直接點擊 `CodexAccountSwitcher.exe` 立即啟動。
+1. 解壓縮 `CodexAccountSwitcher-v1.3.2-Portable.zip` 至任意資料夾（或直接使用複製後的 `src\` 目錄）。
+2. 直接點擊 `CodexAccountSwitcher.exe` 即可立即啟動；若需建立捷徑與完整安裝，建議改用「方式一」GUI 安裝程式。
+
+### 方式三：從原始碼直接執行或本機建置發行包
+1. **直接執行**：複製專案後直接開啟 `src\CodexAccountSwitcher.exe`。
+2. **本機建置 `dist\`**：執行建置腳本，會在 `dist\` 產出 `Setup-CodexAntigravitySwitcher.exe`、`CodexAccountSwitcher-v1.3.2-Portable.zip` 與 `SHA256SUMS.txt`：
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+   ```
 
 ---
 
