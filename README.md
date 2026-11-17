@@ -28,12 +28,12 @@
    - API key 帳號可分別設定加密保存的 Admin API key、USD 每月預算及重置日期時間，非同步顯示本期已用金額與預算剩餘估算。
    - Antigravity 分頁顯示 Gemini、Claude/GPT、Argon 三種額度及各自的重置時間；兩分頁均只顯示帳號，不重複顯示名稱。過期的存取權杖只在記憶體中刷新，不改寫登入項目或備份。
 7. **雙風格介面：傳統清單 vs 冒險者公會戰情室 (Guild Cockpit View)**：
-   - **傳統清單模式**：高資訊密度、經典 Windows 表格、支援右鍵選單快速切換與管理。
+   - **傳統清單模式**：高資訊密度、經典 Windows 表格，透過下方功能按鈕執行帳號切換、新增 API key、預算設定與刪除管理。
    - **公會戰情室模式**：視覺化桌面儀表板，將各帳號具象化為英雄幹員（Codex 符文騎士、Antigravity 星軌工匠等），具備精力充沛/疲憊/竭盡等動態像素立繪。
    - **先鋒主將卡片**：醒目展示當前執勤帳號、五小時與週用量雙能量條、即時狀態與重置倒數。
-   - **後備名冊卡片流**：水平卡片列出所有後備帳號，點擊任一後備卡片即可立即無縫切換執勤。
+   - **後備名冊卡片流**：垂直捲動卡片列出所有後備帳號，點擊卡片上的「**召喚出戰**」即可立即無縫切換執勤。
    - **智慧輪替控制**：
-     - 提供開關核取方塊（可隨時啟用或關閉自動建議）。
+     - 提供「**啟用智慧輪替**」核取方塊，控制是否顯示主將區的「**智慧輪替：換最高戰力出戰**」按鈕，手動一鍵切換至剩餘比例最高的後備帳號。
      - 單帳號保護：當該來源帳號數 $\le 1$ 時，自動隱藏輪替操作項。
      - 嚴格來源隔離：Codex 僅在 Codex 帳號池間切換；Antigravity 僅在 Antigravity 帳號池間切換，嚴禁跨來源互換。
 
@@ -67,9 +67,11 @@
 │   ├── Launcher.cs              # 靜默無命令提示字元視窗之 C# 啟動器
 │   ├── Installer.cs             # 自包含 GUI 安裝精靈原始碼
 │   ├── Install.bat              # 免安裝版一鍵安裝捷徑腳本
-│   └── Uninstall.bat            # 乾淨解除安裝腳本
+│   ├── Uninstall.bat            # 乾淨解除安裝腳本
+│   └── app.ico                  # 應用程式與捷徑金鑰匙圖示
 ├── tests/                       # 自動化測試套件
-│   └── Run-SelfTest.ps1         # 核心邏輯自我驗證執行腳本
+│   ├── Run-SelfTest.ps1         # 核心邏輯與全套回歸測試執行腳本
+│   └── *.Tests.ps1              # 身分識別、額度、計費、UI 與 Web 儀表板專項測試
 ├── .env.example                 # 環境變數設定範本
 ├── .gitignore                   # 嚴格機敏資料過濾防護
 ├── docker-compose.yml           # 容器化審計與測試環境設定
@@ -97,7 +99,7 @@
 
 ![冒險者公會戰情室 - Codex 符文工會模式](preview_guild.png)
 
-- **切換至公會戰情室**：點擊任一分頁右上角青色高亮的「**切換公會戰情室 (Guild)**」按鈕，立即展開沉浸式像素英雄戰情面板。
+- **切換至公會戰情室**：點擊 Codex 或 Antigravity 分頁右上角「**切換公會戰情室 (Guild)**」按鈕，立即展開沉浸式像素英雄戰情面板。
 - **切換回傳統清單**：在公會戰情室頂部右上角點擊「**切換為傳統清單 (Classic)**」，隨時返回高資訊密度表格。
 - **即時連動**：切換風格不會影響背景的非同步額度查詢排程，兩套介面共享同一資料模型與切換核心。
 
@@ -180,7 +182,7 @@ Antigravity 分頁以 `G` 表示 Gemini、`C` 表示 Claude/GPT、`A` 表示 Arg
 
 額度直接使用帳號的存取權杖向 Google `daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` 查詢；方案使用 `loadCodeAssist`。請求的 `User-Agent` 使用桌面版 `hub` 識別，帶入已安裝 `Antigravity.exe` 的檔案版本及 Windows 架構（`antigravity/hub/<版本> windows/<架構>`）；本機對照實查確認，缺少 `hub` 會使服務省略 Argon。每次額外呼叫同一主機的 `fetchAvailableModels` 以偵測 Argon；即使 Gemini／Claude 摘要完整也不略過。Argon 模型與一般 Gemini 隔離，只採明確回傳且介於 0 至 1 的 `quotaInfo.remainingFraction` 與對應 `resetTime`，不將缺漏資料補為 100%。過期時使用備份內的刷新權杖與已安裝 Antigravity 程式中的 OAuth 用戶端設定，在記憶體中取得新存取權杖。此流程不需 CLI，也不修改備份或目前登入。這些是 Antigravity 內部端點與程式設定，版本更新後可能改變；查詢失敗會顯示狀態，不影響切換。四個真實備份帳號已驗證 Gemini 與 Claude/GPT 的五小時及每週額度；改用 `hub` 識別後，其中三個帳號已取得真實 Argon 每週比例及重置時間，另一帳號未回傳。兩個真實帳號也已驗證免瀏覽器重登切換與引導登入，工作區及對話仍保留。
 
-新版首次啟動會驗證 `%LOCALAPPDATA%\CodexAccountSwitcher` 的舊版 Codex 加密備份，將尚未存在的帳號複製到 `%LOCALAPPDATA%\CodexAntigravitySwitcher`。舊版原件保留；若新版已有同一帳號的備份，不覆寫新版資料。桌面與開始功能表捷徑使用舊版相同的金鑰圖示。
+新版首次啟動會驗證 `%LOCALAPPDATA%\CodexAccountSwitcher` 的舊版 Codex 加密備份，將尚未存在的帳號複製到 `%LOCALAPPDATA%\CodexAntigravitySwitcher`。舊版原件保留；若新版已有同一帳號的備份，不覆寫新版資料。桌面與開始功能表捷徑優先使用內附的 `app.ico` 金鑰匙圖示，找不到時才退回系統 `shell32.dll,44` 金鑰圖示。
 
 若需在不讀取已安裝版 Codex 帳號的情況下測試 Antigravity，可從原始碼以 `-IsolatedAntigravityTestPath` 指定獨立資料目錄；此模式會停用 Codex 分頁，Antigravity 仍使用目前 Windows 使用者的真實登入項目。
 
@@ -198,17 +200,17 @@ Antigravity 分頁以 `G` 表示 Gemini、`C` 表示 Claude/GPT、`A` 表示 Arg
 ![遠端副機控制台](preview_web.png)
 
 1. **啟動 Web 儀表板**：
-   - 切換至「**遠端副機 (Web)**」分頁（或在 Codex 分頁點擊「🌐 遠端副機 / Web」快速跳轉）。
-   - 設定監聽 Port（預設 `8998`），點擊「**▶ 啟動 Web 儀表板**」。
+   - 切換至「**遠端副機 (Web)**」分頁。
+   - 設定監聽 Port（預設 `8998`），點擊「**▶ 啟動服務**」。
    - 工具會自動生成一組 6 碼隨機動態驗證碼（例如 `839201`），並顯示服務網址（例如 `http://192.168.1.168:8998`）。
 2. **副機 SSH 連線設定**：
    - 預設目標副機為 `192.168.1.195`、SSH 帳號 `vince`、連接埠 `22`、目標路徑 `~/.codex/auth.json`。
-   - 點擊「**⚡ 測試副機 SSH 連線**」可即時驗證免密碼金鑰通道是否就緒。
+   - 點擊「**測試副機 SSH 連線**」可即時驗證免密碼金鑰通道是否就緒。
 3. **遠端瀏覽器切換操作**：
    - 在 CentOS 8 或同網段任意裝置的瀏覽器開啟 `http://192.168.1.168:8998`。
    - 輸入主機顯示的 6 碼 PIN 解鎖戰情儀表板。
-   - **防衝突保護**：正在主機執勤中的帳號會自動顯示 `🔒 主機使用中（鎖定保護）`，切換按鈕強制反灰禁止點擊。
-   - 點選其他任一後備帳號的「🚀 切換至 CentOS 副機」，主機即刻經由 SSH 安全通道將解密後之 `auth.json` 推送至副機並原子覆蓋。
+   - **防衝突保護**：正在主機執勤中的帳號會自動顯示 `🔒 主機使用中（鎖定保護，禁止副機切換）`，切換按鈕反灰顯示「已在主機執勤」並禁止點擊。
+   - 點選其他任一非主機使用中帳號的「🚀 切換至 CentOS 副機」，主機即刻經由 SSH 安全通道先結束副機既有 Codex Desktop 程序、將解密後之 `auth.json` 原子覆蓋至副機（目錄 `700`／檔案 `600`），並自動重新喚起副機 Codex Desktop。
 
 ---
 
@@ -225,7 +227,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-SelfTest.ps1
 ## 🔒 資安宣告（Security Policy）
 
 * 本專案遵循 **Zero-Credential Policy**，原始碼與版本控制歷史中**絕不包含**任何真實使用者權杖 (`auth.json`)、DPAPI 加密金鑰檔 (`*.bin`)、個人電子郵件或操作日誌 (`*.log`)。
-* 帳號切換於本機進行原子檔案置換；額度查詢直接連線 OpenAI，不架設中繼伺服器。備份與工作區不會因查詢失敗而刪除。
+* 帳號切換於本機進行原子檔案置換；額度與費用查詢直接連線 OpenAI（及 Antigravity 對應 Google 服務端點），不架設中繼伺服器。備份與工作區不會因查詢失敗而刪除。
 
 ---
 

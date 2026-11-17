@@ -14,7 +14,10 @@ flowchart TD
     Switcher --> ProcessMgr["Process Manager (優雅關閉與重啟 Desktop)"]
     Switcher --> GuidedLogin["Guided Login (codex login)"]
     Switcher --> Quota["Codex HttpClient 非同步用量 GET"]
+    Switcher --> Billing["CodexBilling.ps1 (API 預算與費用 GET)"]
     Switcher --> AuthTarget["Target: %USERPROFILE%/.codex/auth.json"]
+    Switcher --> Guild["GuildView.ps1 (公會戰情室視圖)"]
+    Switcher --> Web["WebDashboard.ps1 + index.html (遠端切換)"]
     Switcher --> AG["AntigravityCredential.ps1"]
     Switcher --> AGQuota["AntigravityQuota.ps1 非同步用量 POST"]
     AG --> CredMan["Windows Credential Manager: gemini:antigravity"]
@@ -39,6 +42,12 @@ flowchart TD
 6. **Antigravity 額度 (`AntigravityQuota.ps1`)**：
    - 以已儲存帳號的存取權杖查詢 Gemini、Claude/GPT、Argon 三組額度與方案；每次查詢模型以偵測 Argon，摘要優先，缺少時以同組模型補充，明示來源及未提供的視窗。
    - 存取權杖過期時，僅在記憶體中以刷新權杖換發；OAuth 用戶端設定取自已安裝的 Antigravity 程式，不寫入原始認證或備份。
+7. **API 費用與預算 (`CodexBilling.ps1`)**：
+   - 以 DPAPI CurrentUser 獨立加密儲存各 API key 帳號的 Admin API key、USD 每月預算、自訂重置日／時／分、設定時區與查詢範圍，並非同步查詢 `GET /v1/organization/costs` 估算當期已用金額與剩餘預算。
+8. **公會戰情室 (`GuildView.ps1`)**：
+   - 提供與傳統清單共享資料模型與切換核心的沉浸式英雄戰情介面，呈現先鋒主將、後備名冊卡片流、動態像素立繪與手動智慧輪替控制，並將介面偏好保存於 `ui-pref.json`。
+9. **遠端 Web 儀表板 (`WebDashboard.ps1` / `src/assets/web/index.html`)**：
+   - 在本機啟動含 6 碼動態 PIN 驗證的 HTTP 服務，提供區網瀏覽器檢視 Codex 帳號狀態，並以防衝突鎖定保護避免搶佔主機使用中帳號，經由 OpenSSH/SCP 將目標 `auth.json` 原子派送至 CentOS 8 副機並重啟副機端程序。
 
 ---
 
@@ -55,7 +64,7 @@ flowchart TD
 | **獨立測試** | `-IsolatedAntigravityTestPath` 將備份及日誌放在指定目錄，停用 Codex 分頁並避免讀取既有 Codex 登入檔；Antigravity 認證目標仍為目前使用者的真實項目。 |
 
 新版安裝目錄、捷徑與 Windows 解除安裝項目另設名稱，與既有 `CodexAccountSwitcher` 安裝並存。執行中的 Codex 視窗仍使用相同單一實例鎖，避免兩套工具同時切換同一個 `auth.json`。
-新版桌面與開始功能表捷徑沿用舊版的 `shell32.dll,44` 金鑰圖示。
+新版桌面與開始功能表捷徑優先使用套件內的 `app.ico` 金鑰匙圖示，若該檔案不存在則退回 `shell32.dll,44`。
 
 ## 4. 帳號唯一性
 
